@@ -259,6 +259,7 @@ const istInvalid = !Number.isFinite(newIst) || newIst < 0;
     istStunden: newIst
   };
 saveSnapshot("vor Wochen-Eintrag");
+saveSnapshot("automatisch vor Wochen-Eintrag");
   setEintraege((prev) => {
     const next = prev.filter(
       (e) => !(eqId(e.mitarbeiterId, mitarbeiterId) && e.woche === norm)
@@ -325,6 +326,7 @@ saveSnapshot("vor Wochen-Eintrag");
     };
 
     // Upsert: gleiche Kombination überschreiben (Mitarbeiter+Woche+Tag+Art)
+    saveSnapshot("automatisch vor Abwesenheit");
     setAbwesenheiten((prev) => {
       const next = prev.filter(
         (a) =>
