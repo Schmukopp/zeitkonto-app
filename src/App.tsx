@@ -516,9 +516,10 @@ export default function App() {
 
   // ===== UI =====
   return (
-    <div className="p-6 space-y-6">
+    <div className="min-h-screen bg-slate-50 p-6 space-y-6 text-slate-900">
+
       {/* ===== Kiste 1: Kopf / Filter / Sicherung ===== */}
-      <div className="rounded-2xl border bg-white p-4 space-y-4">
+      <div className="rounded-2xl border bg-white/80 shadow-sm space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-2xl font-bold">Zeitkonto</div>
@@ -642,7 +643,7 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 2: Zusammenfassung ===== */}
-<div className="rounded-2xl border bg-white p-4 space-y-3">
+<div className="rounded-2xl border bg-white/80 shadow-sm p-4 space-y-3">
   <div className="flex items-center justify-between gap-3">
     <div className="font-semibold">Zusammenfassung</div>
     <div className="text-xs text-gray-500">
@@ -703,7 +704,7 @@ export default function App() {
 
 
       {/* ===== Kiste 3: Wochenübersicht ===== */}
-      <div className="rounded-2xl border bg-white p-4 space-y-3">
+      <div className="rounded-2xl border bg-white/80 shadow-sm p-4 space-y-3">
         <div className="font-semibold">Wochenübersicht</div>
 
         <div className="overflow-x-auto rounded-xl border">
@@ -752,7 +753,7 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 4: Eingaben & Verwaltung (aufklappen) ===== */}
-      <details className="rounded-2xl border bg-white p-4" open={false}>
+      <details className="rounded-2xl border bg-white/80 shadow-sm p-4" open={false}>
 
         <summary className="cursor-pointer font-semibold">
   Eingaben & Verwaltung (klick zum Öffnen)
