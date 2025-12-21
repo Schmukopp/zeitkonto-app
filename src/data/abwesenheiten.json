@@ -1,0 +1,12 @@
+[
+  { "mitarbeiterId": "Don", "woche": "2025-W50", "tag": "mi", "art": "urlaub", "stunden": 5 },
+  { "mitarbeiterId": "Don", "woche": "2025-W51", "tag": "di", "art": "urlaub", "stunden": 2.5 },
+
+  { "mitarbeiterId": "Peter",  "woche": "2025-W50", "tag": "mi", "art": "urlaub", "stunden": 5   },
+  { "mitarbeiterId": "Peter",  "woche": "2025-W51", "tag": "di", "art": "urlaub", "stunden": 2.5 },
+
+  { "mitarbeiterId": "Lutz", "woche": "2025-W50", "tag": "mo", "art": "krank", "stunden": 8   },
+  { "mitarbeiterId": "Lutz", "woche": "2025-W52", "tag": "di", "art": "feiertag", "stunden": 8  }
+]
+
+
