@@ -79,10 +79,21 @@ type Snapshot = {
 };
 
 const [hasSnapshot, setHasSnapshot] = useState<boolean>(() => {
+  
   try {
     return !!localStorage.getItem("zeitkonto.snapshot.v1");
   } catch {
     return false;
+  }
+});
+const [snapshotAt, setSnapshotAt] = useState<string>(() => {
+  try {
+    const raw = localStorage.getItem("zeitkonto.snapshot.v1");
+    if (!raw) return "";
+    const snap = JSON.parse(raw) as { savedAt?: string };
+    return snap.savedAt ?? "";
+  } catch {
+    return "";
   }
 });
 
@@ -96,6 +107,8 @@ function saveSnapshot(reason: string) {
     };
     localStorage.setItem("zeitkonto.snapshot.v1", JSON.stringify(snap));
     setHasSnapshot(true);
+    setSnapshotAt(snap.savedAt);
+
     setFormInfo(`Snapshot gespeichert (${reason}).`);
   } catch (err) {
     setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht gespeichert werden.");
@@ -114,6 +127,8 @@ function restoreSnapshot() {
     setEintraege(snap.eintraege);
     setAbwesenheiten(snap.abwesenheiten);
     setHasSnapshot(true);
+    setSnapshotAt(snap.savedAt);
+
     setFormInfo(`Snapshot wiederhergestellt (${snap.savedAt}).`);
   } catch (err) {
     setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht wiederhergestellt werden.");
@@ -124,6 +139,8 @@ function clearSnapshot() {
   try {
     localStorage.removeItem("zeitkonto.snapshot.v1");
     setHasSnapshot(false);
+    setSnapshotAt("");
+
     setFormInfo("Snapshot gelöscht.");
   } catch (err) {
     setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht gelöscht werden.");
@@ -530,6 +547,11 @@ saveSnapshot("automatisch vor Wochen-Eintrag");
     Status: {hasSnapshot ? "Snapshot vorhanden" : "Kein Snapshot vorhanden"}
   </div>
 </div>
+{hasSnapshot && snapshotAt && (
+  <div className="text-sm text-gray-600">
+    Letzter Snapshot: {snapshotAt.replace("T", " ").slice(0, 16)}
+  </div>
+)}
 
         <button className="border rounded-lg px-4 py-2 text-sm" type="button" onClick={resetToDemoData}>
           Reset (Demo-Daten)
