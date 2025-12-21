@@ -111,6 +111,8 @@ export default function App() {
   const [newWoche, setNewWoche] = useState("2025-W50");
   const [newIst, setNewIst] = useState<number>(40);
   const [formError, setFormError] = useState<string | null>(null);
+  const [formInfo, setFormInfo] = useState<string | null>(null);
+
 
   const [abwWoche, setAbwWoche] = useState("2025-W50");
   const [abwTag, setAbwTag] = useState<WochenTag>("mi");
@@ -129,6 +131,10 @@ export default function App() {
     () => eintraege.filter((e) => eqId(e.mitarbeiterId, mitarbeiter.id) && inRange(e.woche)),
     [eintraege, mitarbeiter.id, fromWoche, toWoche]
   );
+const normalizedNewWoche = normalizeIsoWeek(newWoche);
+const willOverwrite =
+  !!normalizedNewWoche &&
+  eintraegeM.some((e) => e.woche === normalizedNewWoche);
 
   const abwesenheitenM = useMemo(
     () => abwesenheiten.filter((a) => eqId(a.mitarbeiterId, mitarbeiter.id) && inRange(a.woche)),
@@ -138,6 +144,7 @@ export default function App() {
   // ===== A8.1 Handler =====
   function addWochenEintrag() {
     setFormError(null);
+setFormInfo(null);
 
     const nw = normalizeIsoWeek(newWoche);
     if (!nw) {
@@ -164,7 +171,10 @@ export default function App() {
       next.sort((a, b) => a.woche.localeCompare(b.woche));
       return next;
     });
+    setFormInfo(willOverwrite ? "Eintrag überschrieben." : "Eintrag gespeichert.");
+
   }
+
 
   function deleteWochenEintrag(mitarbeiterIdDel: string, woche: string) {
     setEintraege((prev) => prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiterIdDel) && e.woche === woche)));
@@ -539,14 +549,17 @@ export default function App() {
       </div>
 
       {/* A8.1 Wochen-Eintrag hinzufügen */}
-      <div className="rounded-xl border p-4 space-y-3">
+<div className="rounded-xl border p-4 space-y-3">
   <div className="font-semibold">Wochen-Eintrag hinzufügen</div>
 
   <div className="flex flex-wrap items-end gap-3">
     <div className="flex flex-col gap-1">
       <label className="text-sm text-gray-600">Woche (ISO)</label>
       <input
-        className="border rounded-lg p-2 w-36"
+        className={
+          "border rounded-lg p-2 w-36 " +
+          (newWoche.trim().length > 0 && !normalizedNewWoche ? "border-red-400" : "")
+        }
         value={newWoche}
         onChange={(e) => setNewWoche(e.target.value)}
         onBlur={() => {
@@ -572,13 +585,24 @@ export default function App() {
     <button className="border rounded-lg px-4 py-2" onClick={addWochenEintrag} type="button">
       Hinzufügen
     </button>
+  </div>
 
-    <div className="text-xs text-gray-500">
-      Hinweis: Pro Mitarbeiter + Woche gibt es nur einen Eintrag (wird überschrieben).
-    </div>
+  <div className="text-xs text-gray-500">
+    {normalizedNewWoche ? (
+      willOverwrite ? (
+        <span className="text-amber-700">
+          Achtung: Für diese Woche existiert bereits ein Eintrag – er wird überschrieben.
+        </span>
+      ) : (
+        <span className="text-green-700">Neuer Eintrag – wird hinzugefügt.</span>
+      )
+    ) : (
+      <span>Format: YYYY-WNN (z.B. 2025-W05)</span>
+    )}
   </div>
 
   {formError && <div className="text-sm text-red-700">{formError}</div>}
+  {formInfo && <div className="text-sm text-green-700">{formInfo}</div>}
 </div>
 
 
