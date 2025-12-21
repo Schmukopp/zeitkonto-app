@@ -516,18 +516,21 @@ export default function App() {
 
   // ===== UI =====
   return (
-    <div className="min-h-screen bg-slate-50 p-6 space-y-6 text-slate-900">
+    <div className="min-h-screen bg-zinc-950 p-6 space-y-6 text-zinc-100">
+
 
       {/* ===== Kiste 1: Kopf / Filter / Sicherung ===== */}
-      <div className="rounded-2xl border bg-white/80 shadow-sm space-y-4">
+      <div className="rounded-2xl border-zinc-800 bg-zinc-900/60 shadow-sm space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-2xl font-bold">Zeitkonto</div>
-            <div className="text-sm text-gray-600">{mitarbeiter.name}</div>
+            <div className="text-4xl font-bold">Zeitkonto</div>
+            
+            <div className="text-3xl text-blue-500">{mitarbeiter.name}</div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button className="border rounded-lg px-4 py-2 text-sm" type="button" onClick={resetToDemoData}>
+            <button className="rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500"  type="button" onClick={resetToDemoData}>
+              
               Reset (Demo-Daten)
             </button>
           </div>
@@ -601,15 +604,15 @@ export default function App() {
           <div className="font-semibold text-sm">Sicherung</div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className="border rounded-lg px-3 py-2 text-sm" onClick={() => saveSnapshot("manuell")}>
+            <button type="button" className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500" onClick={() => saveSnapshot("manuell")}>
               Snapshot speichern
             </button>
 
-            <button type="button" className="border rounded-lg px-3 py-2 text-sm disabled:opacity-50" onClick={restoreSnapshot} disabled={!hasSnapshot}>
+            <button type="button" className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500" onClick={restoreSnapshot} disabled={!hasSnapshot}>
               Snapshot zurückholen
             </button>
 
-            <button type="button" className="border rounded-lg px-3 py-2 text-sm disabled:opacity-50" onClick={clearSnapshot} disabled={!hasSnapshot}>
+            <button type="button" className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500" onClick={clearSnapshot} disabled={!hasSnapshot}>
               Snapshot löschen
             </button>
 
@@ -620,11 +623,11 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t">
-            <button type="button" className="border rounded-lg px-3 py-2 text-sm" onClick={exportAll}>
+            <button type="button" className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500" onClick={exportAll}>
               Export (Datei speichern)
             </button>
 
-            <label className="border rounded-lg px-3 py-2 text-sm cursor-pointer">
+            <label className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500">
               Import (Datei laden)
               <input
                 type="file"
@@ -643,7 +646,7 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 2: Zusammenfassung ===== */}
-<div className="rounded-2xl border bg-white/80 shadow-sm p-4 space-y-3">
+<div className="rounded-2xl border-zinc-800 bg-zinc-900/60 shadow-sm p-4 space-y-3">
   <div className="flex items-center justify-between gap-3">
     <div className="font-semibold">Zusammenfassung</div>
     <div className="text-xs text-gray-500">
@@ -704,21 +707,21 @@ export default function App() {
 
 
       {/* ===== Kiste 3: Wochenübersicht ===== */}
-      <div className="rounded-2xl border bg-white/80 shadow-sm p-4 space-y-3">
-        <div className="font-semibold">Wochenübersicht</div>
+      <div className="rounded-2xl border-zinc-800 bg-zinc-900/60 shadow-sm p-4 space-y-3">
+        <div className="border rounded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500">Wochenübersicht</div>
 
         <div className="overflow-x-auto rounded-xl border">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr className="text-left">
-                <th className="p-3">Woche</th>
-                <th className="p-3">IST</th>
-                <th className="p-3">SOLL</th>
-                <th className="p-3">Abw</th>
-                <th className="p-3">eSOLL</th>
-                <th className="p-3">Δ</th>
-                <th className="p-3">Saldo</th>
-                <th className="p-3">Urlaub (T)</th>
+                <th className="border nded-lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500">Woche</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500">IST</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500p-3">SOLL</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500p-3">Abw</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500-3">eSOLL</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500-3">Δ</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500-3">Saldo</th>
+                <th className="border -lg bg-orange-500 px-3 py-2 text-sm font-semibold text-zinc-950 hover:bg-orange-400 active:bg-orange-500-3">Urlaub (T)</th>
               </tr>
             </thead>
             <tbody>
@@ -753,7 +756,7 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 4: Eingaben & Verwaltung (aufklappen) ===== */}
-      <details className="rounded-2xl border bg-white/80 shadow-sm p-4" open={false}>
+      <details className="rounded-2xl border-zinc-800 bg-zinc-900/60 shadow-sm p-4" open={false}>
 
         <summary className="cursor-pointer font-semibold">
   Eingaben & Verwaltung (klick zum Öffnen)
