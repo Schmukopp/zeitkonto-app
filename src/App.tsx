@@ -121,17 +121,7 @@ useEffect(() => {
   }, 5000);
 
   return () => window.clearTimeout(t);
-}, [formError, formInfo]);
-
-  useEffect(() => {
-  if (!formError && !formInfo) return;
-  const t = window.setTimeout(() => {
-    setFormError(null);
-    setFormInfo(null);
-  }, 5000);
-  return () => window.clearTimeout(t);
-}, [formError, formInfo]);
-
+}, [formError, formInfo])
 
   const [abwWoche, setAbwWoche] = useState("2025-W50");
   const [abwTag, setAbwTag] = useState<WochenTag>("mi");
@@ -160,43 +150,55 @@ const willOverwrite =
     [abwesenheiten, mitarbeiter.id, fromWoche, toWoche]
   );
 
-  // ===== A8.1 Handler =====
-  function addWochenEintrag() { 
-    setFormError(null);
-setFormInfo(null);
+  // ===== A11.9 Handler =====
+  function addWochenEintrag() {
+  // niemals setState im Render-Pfad, nur hier im Handler
+  setFormError(null);
+  setFormInfo(null);
 
-
-    const nw = normalizeIsoWeek(newWoche);
-    if (!nw) {
-      setFormError("Woche muss im Format YYYY-WNN sein (z.B. 2025-W50).");
-      return;
-    }
-    if (!Number.isFinite(newIst) || newIst < 0) {
-      setFormError("IST-Stunden müssen eine Zahl >= 0 sein.");
-      return;
-    }
-
-    setNewWoche(nw);
-
-    const entry: WochenEintrag = {
-      mitarbeiterId: mitarbeiter.id,
-      woche: nw,
-      istStunden: newIst
-    };
-
-    // Upsert: pro Mitarbeiter+Woche nur ein Eintrag
-    setEintraege((prev) => {
-      const next = prev.filter((e) => !(eqId(e.mitarbeiterId, entry.mitarbeiterId) && e.woche === entry.woche));
-      next.push(entry);
-      next.sort((a, b) => a.woche.localeCompare(b.woche));
-      return next;
-    });
-
-    setFormInfo(willOverwrite ? "Eintrag überschrieben." : "Eintrag gespeichert.");
-setNewIst(0);
-
-
+  if (!mitarbeiterId) {
+    setFormError("Kein Mitarbeiter ausgewählt.");
+    return;
   }
+
+  const norm = normalizeIsoWeek(newWoche);
+  if (!norm) {
+    setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
+    return;
+  }
+
+  if (!Number.isFinite(newIst) || newIst < 0) {
+    setFormError("IST-Stunden müssen eine Zahl >= 0 sein.");
+    return;
+  }
+
+  // Hinweis, ob überschrieben wird (case-insensitive Id)
+  const overwrote = eintraege.some(
+    (e) => eqId(e.mitarbeiterId, mitarbeiterId) && e.woche === norm
+  );
+
+  const newEntry: WochenEintrag = {
+    mitarbeiterId,
+    woche: norm,
+    istStunden: newIst
+  };
+
+  setEintraege((prev) => {
+    const next = prev.filter(
+      (e) => !(eqId(e.mitarbeiterId, mitarbeiterId) && e.woche === norm)
+    );
+    next.push(newEntry);
+    next.sort((a, b) => {
+      const idCmp = a.mitarbeiterId.localeCompare(b.mitarbeiterId);
+      return idCmp !== 0 ? idCmp : compareIsoWeek(a.woche, b.woche);
+    });
+    return next;
+  });
+
+  setFormInfo(overwrote ? "Eintrag überschrieben." : "Eintrag gespeichert.");
+  setNewIst(0);
+}
+
 
 
 
