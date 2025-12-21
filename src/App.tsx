@@ -642,22 +642,65 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 2: Zusammenfassung ===== */}
-      <div className="rounded-2xl border bg-white p-4 space-y-2">
-        <div className="font-semibold">Zusammenfassung</div>
-        {s ? (
-          <div className="grid gap-1 text-sm">
-            <div>IST gesamt: {s.sumIst}</div>
-            <div>SOLL gesamt: {s.sumSoll}</div>
-            <div>eSOLL gesamt: {s.sumEffSoll}</div>
-            <div>Abwesenheit (h): {s.sumAbw}</div>
-            <div>Δ gesamt: {s.sumDelta}</div>
-            <div>Urlaub (Tage): {s.sumUrlaubTage.toFixed(2)}</div>
-            <div>End-Saldo: {s.endSaldo}</div>
-          </div>
-        ) : (
-          <div className="text-sm text-gray-500">Keine Auswertung verfügbar.</div>
-        )}
+<div className="rounded-2xl border bg-white p-4 space-y-3">
+  <div className="flex items-center justify-between gap-3">
+    <div className="font-semibold">Zusammenfassung</div>
+    <div className="text-xs text-gray-500">
+      Zeitraum: {rangeOk ? `${fromN} bis ${toN}` : "alle"}
+    </div>
+  </div>
+
+  {s ? (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">IST gesamt</div>
+        <div className="text-xl font-semibold">{s.sumIst}</div>
       </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">eSOLL gesamt</div>
+        <div className="text-xl font-semibold">{s.sumEffSoll}</div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">Δ gesamt</div>
+        <div className={"text-xl font-semibold " + (s.sumDelta < 0 ? "text-red-700" : "text-green-700")}>
+          {s.sumDelta}
+        </div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">End-Saldo</div>
+        <div className={"text-xl font-semibold " + (s.endSaldo < 0 ? "text-red-700" : "text-green-700")}>
+          {s.endSaldo}
+        </div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">Abwesenheit (h)</div>
+        <div className="text-xl font-semibold">{s.sumAbw}</div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">Urlaub (Tage)</div>
+        <div className="text-xl font-semibold">{s.sumUrlaubTage.toFixed(2)}</div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">SOLL gesamt</div>
+        <div className="text-xl font-semibold">{s.sumSoll}</div>
+      </div>
+
+      <div className="rounded-xl border p-3">
+        <div className="text-xs text-gray-500">Wochen im Blick</div>
+        <div className="text-xl font-semibold">{rows.length}</div>
+      </div>
+    </div>
+  ) : (
+    <div className="text-sm text-gray-500">Keine Auswertung verfügbar.</div>
+  )}
+</div>
+
 
       {/* ===== Kiste 3: Wochenübersicht ===== */}
       <div className="rounded-2xl border bg-white p-4 space-y-3">
@@ -685,8 +728,13 @@ export default function App() {
                   <td className="p-3">{r.sollStunden}</td>
                   <td className="p-3">{r.abwesenheitStunden}</td>
                   <td className="p-3">{r.effektivesSoll}</td>
-                  <td className="p-3">{r.delta}</td>
-                  <td className="p-3">{r.saldo}</td>
+                  <td className={"p-3 " + (r.delta < 0 ? "text-red-700 font-medium" : "text-green-700 font-medium")}>
+  {r.delta}
+</td>
+<td className={"p-3 " + (r.saldo < 0 ? "text-red-700 font-medium" : "text-green-700 font-medium")}>
+  {r.saldo}
+</td>
+
                   <td className="p-3">{r.urlaubstage.toFixed(2)}</td>
                 </tr>
               ))}
@@ -704,8 +752,12 @@ export default function App() {
       </div>
 
       {/* ===== Kiste 4: Eingaben & Verwaltung (aufklappen) ===== */}
-      <details className="rounded-2xl border bg-white p-4">
-        <summary className="cursor-pointer font-semibold">Eingaben & Verwaltung (aufklappen)</summary>
+      <details className="rounded-2xl border bg-white p-4" open={false}>
+
+        <summary className="cursor-pointer font-semibold">
+  Eingaben & Verwaltung (klick zum Öffnen)
+</summary>
+
 
         <div className="mt-4 space-y-6">
           {/* Mitarbeiter verwalten */}
