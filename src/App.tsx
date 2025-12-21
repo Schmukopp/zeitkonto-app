@@ -141,9 +141,15 @@ useEffect(() => {
     [eintraege, mitarbeiter.id, fromWoche, toWoche]
   );
 const normalizedNewWoche = normalizeIsoWeek(newWoche);
+
 const willOverwrite =
   !!normalizedNewWoche &&
-  eintraegeM.some((e) => e.woche === normalizedNewWoche);
+  eintraege.some(
+    (e) => eqId(e.mitarbeiterId, mitarbeiterId) && e.woche === normalizedNewWoche
+  );
+
+const istInvalid = !Number.isFinite(newIst) || newIst < 0;
+
 
   const abwesenheitenM = useMemo(
     () => abwesenheiten.filter((a) => eqId(a.mitarbeiterId, mitarbeiter.id) && inRange(a.woche)),
@@ -603,21 +609,26 @@ const willOverwrite =
   </div>
 
   <div className="flex flex-col gap-1">
-    <label className="text-sm text-gray-600">IST-Stunden</label>
-    <input
-      className="border rounded-lg p-2 w-28"
-      type="number"
-      step="0.5"
-      min={0}
-      value={Number.isFinite(newIst) ? newIst : 0}
-      onChange={(e) => setNewIst(Number(e.target.value))}
-    />
-  </div>
+  <label className="text-sm text-gray-600">IST-Stunden</label>
+  <input
+    className={"border rounded-lg p-2 w-28 " + (istInvalid ? "border-red-400" : "")}
+    type="number"
+    step="0.5"
+    min={0}
+    value={Number.isFinite(newIst) ? newIst : 0}
+    onChange={(e) => setNewIst(Number(e.target.value))}
+  />
+  {istInvalid && (
+    <div className="text-xs text-red-700">Bitte eine Zahl ≥ 0 eingeben.</div>
+  )}
+</div>
+
 
   <button
     className="border rounded-lg px-4 py-2 disabled:opacity-50"
     type="submit"
-    disabled={!normalizedNewWoche || !Number.isFinite(newIst) || newIst < 0}
+    disabled={!normalizedNewWoche || istInvalid}
+
   >
     Hinzufügen
   </button>
