@@ -27,6 +27,20 @@ const KEY_A = "zeitkonto.abwesenheiten";
 const KEY_SNAPSHOT = "zeitkonto.snapshot.v1";
 
 }
+function downloadJson(filename: string, data: unknown) {
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+}
 
 function normalizeIsoWeek(input: string): string | null {
   // akzeptiert: 2025-W5, 2025-W05, 2025-w5, 2025-w05
@@ -144,6 +158,50 @@ function clearSnapshot() {
     setFormInfo("Snapshot gelöscht.");
   } catch (err) {
     setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht gelöscht werden.");
+  }
+}
+function exportAll() {
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data: {
+      mitarbeiter: mitarbeiterListe,
+      eintraege,
+      abwesenheiten
+    }
+  };
+
+  downloadJson(`zeitkonto-export-${new Date().toISOString().slice(0, 10)}.json`, payload);
+  setFormInfo("Export erstellt (Datei wurde heruntergeladen).");
+}
+
+async function importAll(file: File) {
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text) as {
+      version?: number;
+      data?: {
+        mitarbeiter?: Mitarbeiter[];
+        eintraege?: WochenEintrag[];
+        abwesenheiten?: AbwesenheitEintrag[];
+      };
+    };
+
+    if (!parsed?.data) throw new Error("Ungültige Datei: data fehlt.");
+    if (!Array.isArray(parsed.data.mitarbeiter)) throw new Error("Ungültige Datei: mitarbeiter fehlt.");
+    if (!Array.isArray(parsed.data.eintraege)) throw new Error("Ungültige Datei: eintraege fehlt.");
+    if (!Array.isArray(parsed.data.abwesenheiten)) throw new Error("Ungültige Datei: abwesenheiten fehlt.");
+
+    // Sicherheitsnetz: vorher Snapshot
+    saveSnapshot("vor Import");
+
+    setMitarbeiterListe(parsed.data.mitarbeiter);
+    setEintraege(parsed.data.eintraege);
+    setAbwesenheiten(parsed.data.abwesenheiten);
+
+    setFormInfo("Import erfolgreich. Daten wurden geladen.");
+  } catch (err) {
+    setFormError(err instanceof Error ? err.message : "Import fehlgeschlagen.");
   }
 }
 
@@ -541,6 +599,31 @@ saveSnapshot("automatisch vor Wochen-Eintrag");
     >
       Snapshot löschen
     </button>
+    <div className="pt-2 border-t flex flex-wrap items-center gap-2">
+  <button
+    type="button"
+    className="border rounded-lg px-3 py-2 text-sm"
+    onClick={exportAll}
+  >
+    Export (Datei speichern)
+  </button>
+
+  <label className="border rounded-lg px-3 py-2 text-sm cursor-pointer">
+    Import (Datei laden)
+    <input
+      type="file"
+      accept="application/json"
+      className="hidden"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        void importAll(f);
+        e.target.value = "";
+      }}
+    />
+  </label>
+</div>
+
   </div>
 
   <div className="text-sm text-gray-600">
