@@ -54,6 +54,15 @@ function normalizeIsoWeek(input: string): string | null {
   const week = String(weekNum).padStart(2, "0");
   return `${year}-W${week}`;
 }
+function fmt(n: number) {
+  return Number.isFinite(n) ? n.toString() : "-";
+}
+
+function deltaClass(n: number) {
+  if (n > 0) return "text-green-700";
+  if (n < 0) return "text-red-700";
+  return "text-gray-700";
+}
 
 function compareIsoWeek(a: string, b: string): number {
   return a.localeCompare(b);
