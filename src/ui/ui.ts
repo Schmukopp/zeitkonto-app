@@ -27,6 +27,7 @@ export const ui = {
 
   // ===== Controls =====
   controlRow: "flex flex-wrap items-end gap-3",
+  field: "flex flex-col gap-1",
   input:
     "border border-zinc-700 bg-zinc-950/40 rounded-lg p-2 text-zinc-100 placeholder:text-zinc-500 " +
     "focus:outline-none focus:ring-2 focus:ring-orange-500/80 focus:border-orange-500/60",
@@ -37,12 +38,12 @@ export const ui = {
     "border border-zinc-700 bg-zinc-950/40 rounded-lg p-2 text-zinc-100 " +
     "focus:outline-none focus:ring-2 focus:ring-orange-500/80 focus:border-orange-500/60",
 
-  // Small helpers
-  field: "flex flex-col gap-1",
-  fieldW32: "w-32",
-  fieldW36: "w-36",
-  fieldW40: "w-40",
-  fieldW28: "w-28",
+  // Width helpers (optional)
+  w28: "w-28",
+  w32: "w-32",
+  w36: "w-36",
+  w40: "w-40",
+  w48: "w-48",
 
   // ===== Buttons =====
   btnPrimary:
@@ -57,16 +58,6 @@ export const ui = {
   btnDanger:
     "rounded-lg border border-red-800/60 bg-red-950/30 px-4 py-2 text-sm text-red-100 " +
     "hover:bg-red-950/45 focus:outline-none focus:ring-2 focus:ring-red-500/40",
-
-  // ===== Badges =====
-  badge:
-    "inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900/60 px-2 py-0.5 text-xs text-zinc-200",
-  badgeOrange:
-    "inline-flex items-center rounded-full border border-orange-500/40 bg-orange-500/10 px-2 py-0.5 text-xs text-orange-200",
-  badgeRed:
-    "inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-xs text-red-200",
-  badgeGreen:
-    "inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-200",
 
   // ===== Table =====
   tableWrap:
