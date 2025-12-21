@@ -552,40 +552,50 @@ setFormInfo(null);
 <div className="rounded-xl border p-4 space-y-3">
   <div className="font-semibold">Wochen-Eintrag hinzufügen</div>
 
-  <div className="flex flex-wrap items-end gap-3">
-    <div className="flex flex-col gap-1">
-      <label className="text-sm text-gray-600">Woche (ISO)</label>
-      <input
-        className={
-          "border rounded-lg p-2 w-36 " +
-          (newWoche.trim().length > 0 && !normalizedNewWoche ? "border-red-400" : "")
-        }
-        value={newWoche}
-        onChange={(e) => setNewWoche(e.target.value)}
-        onBlur={() => {
-          const n = normalizeIsoWeek(newWoche);
-          if (n) setNewWoche(n);
-        }}
-        placeholder="2025-W50"
-      />
-    </div>
-
-    <div className="flex flex-col gap-1">
-      <label className="text-sm text-gray-600">IST-Stunden</label>
-      <input
-        className="border rounded-lg p-2 w-28"
-        type="number"
-        step="0.5"
-        min={0}
-        value={Number.isFinite(newIst) ? newIst : 0}
-        onChange={(e) => setNewIst(Number(e.target.value))}
-      />
-    </div>
-
-    <button className="border rounded-lg px-4 py-2" onClick={addWochenEintrag} type="button">
-      Hinzufügen
-    </button>
+ <form
+  className="flex flex-wrap items-end gap-3"
+  onSubmit={(e) => {
+    e.preventDefault();
+    addWochenEintrag();
+  }}
+>
+  <div className="flex flex-col gap-1">
+    <label className="text-sm text-gray-600">Woche (ISO)</label>
+    <input
+      className={
+        "border rounded-lg p-2 w-36 " +
+        (newWoche.trim().length > 0 && !normalizedNewWoche ? "border-red-400" : "")
+      }
+      value={newWoche}
+      onChange={(e) => setNewWoche(e.target.value)}
+      onBlur={() => {
+        const n = normalizeIsoWeek(newWoche);
+        if (n) setNewWoche(n);
+      }}
+      placeholder="2025-W50"
+    />
   </div>
+
+  <div className="flex flex-col gap-1">
+    <label className="text-sm text-gray-600">IST-Stunden</label>
+    <input
+      className="border rounded-lg p-2 w-28"
+      type="number"
+      step="0.5"
+      min={0}
+      value={Number.isFinite(newIst) ? newIst : 0}
+      onChange={(e) => setNewIst(Number(e.target.value))}
+    />
+  </div>
+
+  <button
+    className="border rounded-lg px-4 py-2 disabled:opacity-50"
+    type="submit"
+    disabled={!normalizedNewWoche || !Number.isFinite(newIst) || newIst < 0}
+  >
+    Hinzufügen
+  </button>
+</form>
 
   <div className="text-xs text-gray-500">
     {normalizedNewWoche ? (
