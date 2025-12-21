@@ -540,35 +540,48 @@ export default function App() {
 
       {/* A8.1 Wochen-Eintrag hinzufügen */}
       <div className="rounded-xl border p-4 space-y-3">
-        <div className="font-semibold">Wochen-Eintrag hinzufügen</div>
+  <div className="font-semibold">Wochen-Eintrag hinzufügen</div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-sm text-gray-600">Woche</label>
-            <input
-              className="border rounded-lg p-2 w-32"
-              value={newWoche}
-              onChange={(e) => setNewWoche(e.target.value)}
-              onBlur={() => {
-                const n = normalizeIsoWeek(newWoche);
-                if (n) setNewWoche(n);
-              }}
-              placeholder="2025-W50"
-            />
-          </div>
+  <div className="flex flex-wrap items-end gap-3">
+    <div className="flex flex-col gap-1">
+      <label className="text-sm text-gray-600">Woche (ISO)</label>
+      <input
+        className="border rounded-lg p-2 w-36"
+        value={newWoche}
+        onChange={(e) => setNewWoche(e.target.value)}
+        onBlur={() => {
+          const n = normalizeIsoWeek(newWoche);
+          if (n) setNewWoche(n);
+        }}
+        placeholder="2025-W50"
+      />
+    </div>
 
-          <div className="flex flex-col gap-1">
-            <label className="text-sm text-gray-600">IST (h)</label>
-            <input className="border rounded-lg p-2 w-28" type="number" min={0} step={0.5} value={newIst} onChange={(e) => setNewIst(Number(e.target.value))} />
-          </div>
+    <div className="flex flex-col gap-1">
+      <label className="text-sm text-gray-600">IST-Stunden</label>
+      <input
+        className="border rounded-lg p-2 w-28"
+        type="number"
+        step="0.5"
+        min={0}
+        value={Number.isFinite(newIst) ? newIst : 0}
+        onChange={(e) => setNewIst(Number(e.target.value))}
+      />
+    </div>
 
-          <button className="border rounded-lg px-4 py-2" type="button" onClick={addWochenEintrag}>
-            Speichern
-          </button>
-        </div>
+    <button className="border rounded-lg px-4 py-2" onClick={addWochenEintrag} type="button">
+      Hinzufügen
+    </button>
 
-        {formError && <div className="text-sm text-red-700">{formError}</div>}
-      </div>
+    <div className="text-xs text-gray-500">
+      Hinweis: Pro Mitarbeiter + Woche gibt es nur einen Eintrag (wird überschrieben).
+    </div>
+  </div>
+
+  {formError && <div className="text-sm text-red-700">{formError}</div>}
+</div>
+
+
 
       {/* A8.2 Abwesenheit hinzufügen */}
       <div className="rounded-xl border p-4 space-y-3">
