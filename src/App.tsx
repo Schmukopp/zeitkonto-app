@@ -113,6 +113,15 @@ export default function App() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formInfo, setFormInfo] = useState<string | null>(null);
 
+  useEffect(() => {
+  if (!formError && !formInfo) return;
+  const t = window.setTimeout(() => {
+    setFormError(null);
+    setFormInfo(null);
+  }, 5000);
+  return () => window.clearTimeout(t);
+}, [formError, formInfo]);
+
 
   const [abwWoche, setAbwWoche] = useState("2025-W50");
   const [abwTag, setAbwTag] = useState<WochenTag>("mi");
@@ -172,6 +181,8 @@ setFormInfo(null);
       return next;
     });
     setFormInfo(willOverwrite ? "Eintrag überschrieben." : "Eintrag gespeichert.");
+setNewIst(0);
+
 
   }
 
