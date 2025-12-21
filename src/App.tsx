@@ -20,6 +20,12 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 
 function saveToStorage<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
+  const KEY_M = "zeitkonto.mitarbeiter";
+const KEY_E = "zeitkonto.eintraege";
+const KEY_A = "zeitkonto.abwesenheiten";
+
+const KEY_SNAPSHOT = "zeitkonto.snapshot.v1";
+
 }
 
 function normalizeIsoWeek(input: string): string | null {
@@ -65,12 +71,72 @@ export default function App() {
   const [abwesenheiten, setAbwesenheiten] = useState<AbwesenheitEintrag[]>(
     () => loadFromStorage("zeitkonto.abwesenheiten", initialAbwesenheiten)
   );
+type Snapshot = {
+  mitarbeiter: Mitarbeiter[];
+  eintraege: WochenEintrag[];
+  abwesenheiten: AbwesenheitEintrag[];
+  savedAt: string; // ISO timestamp
+};
+
+const [hasSnapshot, setHasSnapshot] = useState<boolean>(() => {
+  try {
+    return !!localStorage.getItem("zeitkonto.snapshot.v1");
+  } catch {
+    return false;
+  }
+});
+
+function saveSnapshot(reason: string) {
+  try {
+    const snap: Snapshot = {
+      mitarbeiter: mitarbeiterListe,
+      eintraege,
+      abwesenheiten,
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem("zeitkonto.snapshot.v1", JSON.stringify(snap));
+    setHasSnapshot(true);
+    setFormInfo(`Snapshot gespeichert (${reason}).`);
+  } catch (err) {
+    setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht gespeichert werden.");
+  }
+}
+
+function restoreSnapshot() {
+  try {
+    const raw = localStorage.getItem("zeitkonto.snapshot.v1");
+    if (!raw) {
+      setFormError("Kein Snapshot vorhanden.");
+      return;
+    }
+    const snap = JSON.parse(raw) as Snapshot;
+    setMitarbeiterListe(snap.mitarbeiter);
+    setEintraege(snap.eintraege);
+    setAbwesenheiten(snap.abwesenheiten);
+    setHasSnapshot(true);
+    setFormInfo(`Snapshot wiederhergestellt (${snap.savedAt}).`);
+  } catch (err) {
+    setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht wiederhergestellt werden.");
+  }
+}
+
+function clearSnapshot() {
+  try {
+    localStorage.removeItem("zeitkonto.snapshot.v1");
+    setHasSnapshot(false);
+    setFormInfo("Snapshot gelöscht.");
+  } catch (err) {
+    setFormError(err instanceof Error ? err.message : "Snapshot konnte nicht gelöscht werden.");
+  }
+}
+
 
   // Persistenz
   useEffect(() => saveToStorage("zeitkonto.mitarbeiter", mitarbeiterListe), [mitarbeiterListe]);
   useEffect(() => saveToStorage("zeitkonto.eintraege", eintraege), [eintraege]);
   useEffect(() => saveToStorage("zeitkonto.abwesenheiten", abwesenheiten), [abwesenheiten]);
 
+  
   // ===== Auswahl / Filter =====
   const [mitarbeiterId, setMitarbeiterId] = useState(mitarbeiterListe[0]?.id ?? "");
   const [fromWoche, setFromWoche] = useState("2025-W01");
@@ -158,9 +224,13 @@ const istInvalid = !Number.isFinite(newIst) || newIst < 0;
 
   // ===== A11.9 Handler =====
   function addWochenEintrag() {
+    saveSnapshot("vor Wochen-Eintrag");
+
   // niemals setState im Render-Pfad, nur hier im Handler
   setFormError(null);
   setFormInfo(null);
+  saveSnapshot("vor Wochen-Eintrag");
+
 
   if (!mitarbeiterId) {
     setFormError("Kein Mitarbeiter ausgewählt.");
@@ -188,7 +258,7 @@ const istInvalid = !Number.isFinite(newIst) || newIst < 0;
     woche: norm,
     istStunden: newIst
   };
-
+saveSnapshot("vor Wochen-Eintrag");
   setEintraege((prev) => {
     const next = prev.filter(
       (e) => !(eqId(e.mitarbeiterId, mitarbeiterId) && e.woche === norm)
@@ -214,6 +284,9 @@ const istInvalid = !Number.isFinite(newIst) || newIst < 0;
 
   // ===== A8.2 Handler =====
   function addAbwesenheit() {
+    
+    saveSnapshot("vor Wochen-Eintrag");
+
     setAbwError(null);
 
     const aw = normalizeIsoWeek(abwWoche);
@@ -420,6 +493,41 @@ const istInvalid = !Number.isFinite(newIst) || newIst < 0;
           <div className="text-2xl font-bold">Zeitkonto</div>
           <div className="text-sm text-gray-600">{mitarbeiter.name}</div>
         </div>
+<div className="rounded-xl border p-4 space-y-2">
+  <div className="font-semibold">Sicherung (Snapshot)</div>
+
+  <div className="flex flex-wrap items-center gap-2">
+    <button
+      type="button"
+      className="border rounded-lg px-3 py-2 text-sm"
+      onClick={() => saveSnapshot("manuell")}
+    >
+      Snapshot speichern
+    </button>
+
+    <button
+      type="button"
+      className="border rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+      onClick={restoreSnapshot}
+      disabled={!hasSnapshot}
+    >
+      Snapshot zurückholen
+    </button>
+
+    <button
+      type="button"
+      className="border rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+      onClick={clearSnapshot}
+      disabled={!hasSnapshot}
+    >
+      Snapshot löschen
+    </button>
+  </div>
+
+  <div className="text-sm text-gray-600">
+    Status: {hasSnapshot ? "Snapshot vorhanden" : "Kein Snapshot vorhanden"}
+  </div>
+</div>
 
         <button className="border rounded-lg px-4 py-2 text-sm" type="button" onClick={resetToDemoData}>
           Reset (Demo-Daten)
