@@ -10,12 +10,16 @@ import abwesenheitenData from "./data/abwesenheiten.json";
 
 import { EntryAndAbsenceForms } from "./ui/Forms";
 import { Lists } from "./ui/Lists";
+import { MitarbeiterMaske, type TagesBuchung } from "./ui/MitarbeiterMaske";
 
 // ===== Storage Keys =====
 const KEY_M = "zeitkonto.mitarbeiter";
 const KEY_E = "zeitkonto.eintraege";
 const KEY_A = "zeitkonto.abwesenheiten";
 const KEY_SNAPSHOT = "zeitkonto.snapshot.v1";
+
+// NEU (parallel)
+const KEY_TB = "zeitkonto.tagesbuchungen.v1";
 
 // ===== Helpers =====
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -50,6 +54,22 @@ function eqId(a: string, b: string) {
 
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
 const WOCHENTAGE: WochenTag[] = ["mo", "di", "mi", "do", "fr"];
+function isoDateToWochenTag(iso: string): WochenTag | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso ?? "").trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d, 0, 0, 0, 0);
+  const wd = dt.getDay(); // 0=So ... 6=Sa
+  if (wd === 1) return "mo";
+  if (wd === 2) return "di";
+  if (wd === 3) return "mi";
+  if (wd === 4) return "do";
+  if (wd === 5) return "fr";
+  return null; // Sa/So
+}
+
 
 type Snapshot = {
   mitarbeiter: Mitarbeiter[];
@@ -65,19 +85,17 @@ export default function App() {
   const initialAbwesenheiten = abwesenheitenData as AbwesenheitEintrag[];
 
   // ===== Persistierte States =====
-  const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>(() =>
-    loadFromStorage(KEY_M, initialMitarbeiter)
-  );
-  const [eintraege, setEintraege] = useState<WochenEintrag[]>(() =>
-    loadFromStorage(KEY_E, initialEintraege)
-  );
-  const [abwesenheiten, setAbwesenheiten] = useState<AbwesenheitEintrag[]>(() =>
-    loadFromStorage(KEY_A, initialAbwesenheiten)
-  );
+  const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>(() => loadFromStorage(KEY_M, initialMitarbeiter));
+  const [eintraege, setEintraege] = useState<WochenEintrag[]>(() => loadFromStorage(KEY_E, initialEintraege));
+  const [abwesenheiten, setAbwesenheiten] = useState<AbwesenheitEintrag[]>(() => loadFromStorage(KEY_A, initialAbwesenheiten));
+
+  // NEU: Tagesbuchungen parallel
+  const [tagesBuchungen, setTagesBuchungen] = useState<TagesBuchung[]>(() => loadFromStorage(KEY_TB, []));
 
   useEffect(() => saveToStorage(KEY_M, mitarbeiterListe), [mitarbeiterListe]);
   useEffect(() => saveToStorage(KEY_E, eintraege), [eintraege]);
   useEffect(() => saveToStorage(KEY_A, abwesenheiten), [abwesenheiten]);
+  useEffect(() => saveToStorage(KEY_TB, tagesBuchungen), [tagesBuchungen]);
 
   // ===== Meldungen =====
   const [formError, setFormError] = useState<string | null>(null);
@@ -209,7 +227,7 @@ export default function App() {
       });
   }, [abwesenheiten, mitarbeiter, fromWoche, toWoche]);
 
-  // ===== A8 Forms State (controlled, passend zu deiner Forms.tsx) =====
+  // ===== Forms State (controlled) =====
   const [newWoche, setNewWoche] = useState("");
   const normalizedNewWoche = normalizeIsoWeek(newWoche);
 
@@ -377,6 +395,8 @@ export default function App() {
     setMitarbeiterListe((prev) => prev.filter((m) => !eqId(m.id, id)));
     setEintraege((prev) => prev.filter((e) => !eqId(e.mitarbeiterId, id)));
     setAbwesenheiten((prev) => prev.filter((a) => !eqId(a.mitarbeiterId, id)));
+    // parallel: Tagesbuchungen mit löschen
+    setTagesBuchungen((prev) => prev.filter((b) => !eqId(b.mitarbeiterId, id)));
     setFormInfo("Mitarbeiter gelöscht.");
   }
 
@@ -394,6 +414,28 @@ export default function App() {
     );
 
     setFormInfo("Arbeitszeitmodell gespeichert.");
+  }
+
+  // ===== Tagesbuchungen: add/delete (parallel) =====
+  function addTagesBuchung(b: Omit<TagesBuchung, "id">) {
+    // kein Snapshot: bewusst getrennt vom Wochen-Workflow
+    setTagesBuchungen((prev) => {
+      const next: TagesBuchung[] = prev.slice();
+      next.push({ ...b, id: `${Date.now()}-${Math.random().toString(16).slice(2)}` });
+      // sort: Mitarbeiter, Datum, id
+      next.sort((x, y) => {
+        const idCmp = x.mitarbeiterId.localeCompare(y.mitarbeiterId);
+        if (idCmp !== 0) return idCmp;
+        const dCmp = x.datum.localeCompare(y.datum);
+        if (dCmp !== 0) return dCmp;
+        return x.id.localeCompare(y.id);
+      });
+      return next;
+    });
+  }
+
+  function deleteTagesBuchung(id: string) {
+    setTagesBuchungen((prev) => prev.filter((b) => b.id !== id));
   }
 
   // ===== Auswertung (safe) =====
@@ -472,7 +514,23 @@ export default function App() {
         {errorMsg ? <div className="mt-3 text-sm text-red-300">Fehler: {errorMsg}</div> : null}
       </div>
 
-      {/* Eingaben (Forms.tsx controlled) */}
+      {/* NEU: Mitarbeiter-Maske (Tagesbuchungen parallel) */}
+      <MitarbeiterMaske
+  ui={ui}
+  mitarbeiterId={mitarbeiter.id}
+  mitarbeiterName={mitarbeiter.name}
+  getTagesSoll={(isoDate) => {
+    const t = isoDateToWochenTag(isoDate);
+    if (!t) return 0; // Wochenende
+    return mitarbeiter.modell.tage[t]?.sollStunden ?? 0;
+  }}
+  tagesBuchungen={tagesBuchungen}
+  addTagesBuchung={addTagesBuchung}
+  deleteTagesBuchung={deleteTagesBuchung}
+/>
+
+
+      {/* Eingaben (Wochen + Abwesenheit; bleibt wie es ist) */}
       <EntryAndAbsenceForms
         ui={ui}
         mitarbeiter={mitarbeiter}
@@ -597,47 +655,66 @@ export default function App() {
         </div>
       </div>
 
-      {/* Tabelle */}
-      <div className={ui.tableWrap}>
-        <table className={ui.table}>
-          <thead className={ui.thead}>
-            <tr className="text-zinc-300">
-              <th className={ui.th}>Woche</th>
-              <th className={ui.th + " text-right"}>IST</th>
-              <th className={ui.th + " text-right"}>SOLL</th>
-              <th className={ui.th + " text-right"}>Abw</th>
-              <th className={ui.th + " text-right"}>eSOLL</th>
-              <th className={ui.th + " text-right"}>Δ</th>
-              <th className={ui.th + " text-right"}>Saldo</th>
-              <th className={ui.th + " text-right"}>Urlaub</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.woche} className={ui.tr}>
-                <td className={ui.tdStrong}>{r.woche}</td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.istStunden}</td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.sollStunden}</td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.abwesenheitStunden}</td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.effektivesSoll}</td>
-                <td className={ui.td + " text-right tabular-nums " + (r.delta < 0 ? "text-red-300" : "text-emerald-300")}>
-                  {r.delta}
-                </td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.saldo}</td>
-                <td className={ui.td + " text-right tabular-nums"}>{r.urlaubstage.toFixed(2)}</td>
-              </tr>
-            ))}
+      {/* Wochenübersicht (kompakt) */}
+<div className={`${ui.card} ${ui.cardBody}`}>
+  <div className="flex items-end justify-between gap-4">
+    <div>
+      <div className="font-semibold">Wochenübersicht</div>
+      <div className={ui.subtitle}>Kompakt: Ü-Stunden und Überstundenkonto</div>
+    </div>
 
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="p-6 text-center text-zinc-500">
-                  Keine Daten im gewählten Zeitraum
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+    {s ? (
+      <div className="text-sm text-zinc-400">
+        Überstundenkonto aktuell:{" "}
+        <span className={"tabular-nums font-semibold " + (s.endSaldo < 0 ? "text-red-300" : "text-emerald-300")}>
+          {s.endSaldo}
+        </span>{" "}
+        h
       </div>
+    ) : null}
+  </div>
+
+  <div className="mt-3 overflow-x-auto">
+    <table className="min-w-full text-sm">
+      <thead className="text-zinc-300">
+        <tr>
+          <th className="p-2 text-left">Woche</th>
+          <th className="p-2 text-right">Ü-Stunden</th>
+          <th className="p-2 text-right">Überstundenkonto</th>
+          <th className="p-2 text-right">Urlaub (Tage)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.woche} className="border-t border-zinc-800">
+            <td className="p-2 font-medium">{r.woche}</td>
+
+            <td className={"p-2 text-right tabular-nums " + (r.delta < 0 ? "text-red-300" : "text-emerald-300")}>
+              {r.delta}
+            </td>
+
+            <td className="p-2 text-right tabular-nums">{r.saldo}</td>
+
+            <td className="p-2 text-right tabular-nums">{r.urlaubstage.toFixed(2)}</td>
+          </tr>
+        ))}
+
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={4} className="p-6 text-center text-zinc-500">
+              Keine Daten im gewählten Zeitraum
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+
+  <div className={ui.hint + " mt-3"}>
+    Ü-Stunden = Wochen-Differenz (Arbeit vs effektivem SOLL). Überstundenkonto = laufender Stand.
+  </div>
+</div>
+
 
       {/* Zusammenfassung */}
       <div className={`${ui.card} ${ui.cardBody}`}>
