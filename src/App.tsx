@@ -446,17 +446,25 @@ export default function App() {
         <div className={ui.subtitle}>{mitarbeiter ? mitarbeiter.name : "—"}</div>
       </div>
 
-      <button className={ui.btnSecondary} type="button" onClick={resetToDemoData}>
-        Reset (Demo-Daten)
-      </button>
+      <div className="flex items-center gap-2">
+        <button className={ui.btnSecondary} type="button" onClick={resetToDemoData}>
+          Reset (Demo-Daten)
+        </button>
+      </div>
     </div>
 
     {/* Steuerung */}
     <div className={`${ui.card} ${ui.cardBody}`}>
+      <div className="font-semibold">Steuerung</div>
+
       <div className="flex flex-wrap gap-6">
         <div className="flex flex-col gap-1">
           <label className={ui.label}>Mitarbeiter</label>
-          <select className={ui.select} value={mitarbeiterId} onChange={(e) => setMitarbeiterId(e.target.value)}>
+          <select
+            className={ui.select}
+            value={mitarbeiterId}
+            onChange={(e) => setMitarbeiterId(e.target.value)}
+          >
             {mitarbeiterListe.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
@@ -467,33 +475,104 @@ export default function App() {
 
         <div className="flex flex-col gap-1">
           <label className={ui.label}>Von Woche</label>
-          <input className={ui.input} value={fromWoche} onChange={(e) => setFromWoche(e.target.value)} placeholder="2025-W01" />
+          <input
+            className={ui.input}
+            value={fromWoche}
+            onChange={(e) => setFromWoche(e.target.value)}
+            placeholder="2025-W01"
+          />
+          <div className={ui.hint}>Format: 2025-W05</div>
         </div>
 
         <div className="flex flex-col gap-1">
           <label className={ui.label}>Bis Woche</label>
-          <input className={ui.input} value={toWoche} onChange={(e) => setToWoche(e.target.value)} placeholder="2025-W53" />
+          <input
+            className={ui.input}
+            value={toWoche}
+            onChange={(e) => setToWoche(e.target.value)}
+            placeholder="2025-W53"
+          />
+        </div>
+      </div>
+
+      {errorMsg ? <div className={ui.alertError}>Fehler: {errorMsg}</div> : null}
+    </div>
+
+    {/* Eingaben (Formulare) */}
+    <div className="space-y-6">
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Eingaben</div>
+        <div className={ui.subtitle}>
+          Wochen-Einträge und Abwesenheiten für <span className="text-zinc-200">{mitarbeiter?.name ?? "—"}</span>
+        </div>
+
+        <EntryAndAbsenceForms
+          ui={ui}
+          mitarbeiter={mitarbeiter}
+          mitarbeiterId={mitarbeiterId}
+          eintraege={eintraege}
+          abwesenheiten={abwesenheiten}
+          addWochenEintrag={addWochenEintrag}
+          addAbwesenheit={addAbwesenheit}
+          formError={formError}
+          formInfo={formInfo}
+          normalizeIsoWeek={normalizeIsoWeek}
+          eqId={eqId}
+        />
+      </div>
+
+      {/* Mitarbeiter verwalten */}
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Mitarbeiter verwalten</div>
+        <div className={ui.subtitle}>Neuen Mitarbeiter anlegen oder löschen.</div>
+
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col gap-1">
+            <label className={ui.label}>Neue ID</label>
+            <input
+              className={ui.input}
+              value={newEmpId}
+              onChange={(e) => setNewEmpId(e.target.value)}
+              placeholder="z.B. peter"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className={ui.label}>Name</label>
+            <input
+              className={ui.input}
+              value={newEmpName}
+              onChange={(e) => setNewEmpName(e.target.value)}
+              placeholder="Peter Müller"
+            />
+          </div>
+
+          <button type="button" className={ui.btnPrimary} onClick={addMitarbeiter}>
+            Anlegen
+          </button>
+        </div>
+
+        <div className="pt-4 space-y-2">
+          {mitarbeiterListe.map((m) => (
+            <div
+              key={m.id}
+              className="flex items-center justify-between border-t border-zinc-800 pt-2"
+            >
+              <div className="text-sm">
+                <span className="font-medium">{m.name}</span>{" "}
+                <span className="text-zinc-500">({m.id})</span>
+              </div>
+
+              <button type="button" className={ui.btnDanger} onClick={() => deleteMitarbeiter(m.id)}>
+                Löschen
+              </button>
+            </div>
+          ))}
         </div>
       </div>
     </div>
 
-    {/* Forms: Wochen-Eintrag + Abwesenheit hinzufügen */}
-    <EntryAndAbsenceForms
-  ui={ui}
-  mitarbeiter={mitarbeiter}
-  mitarbeiterId={mitarbeiterId}
-  eintraege={eintraege}
-  abwesenheiten={abwesenheiten}
-  addWochenEintrag={addWochenEintrag}
-  addAbwesenheit={addAbwesenheit}
-  formError={formError}
-  formInfo={formInfo}
-  normalizeIsoWeek={normalizeIsoWeek}
-  eqId={eqId}
-/>
-
-
-    {/* Tabelle: Auswertung */}
+    {/* Tabelle */}
     <div className={ui.tableWrap}>
       <table className={ui.table}>
         <thead className={ui.thead}>
@@ -508,7 +587,6 @@ export default function App() {
             <th className={ui.th}>Urlaub</th>
           </tr>
         </thead>
-
         <tbody>
           {rows.map((r) => (
             <tr key={r.woche} className={`${ui.tr} ${ui.trZebra} ${ui.trHover}`}>
@@ -517,39 +595,10 @@ export default function App() {
               <td className={ui.td}>{r.sollStunden}</td>
               <td className={ui.td}>{r.abwesenheitStunden}</td>
               <td className={ui.td}>{r.effektivesSoll}</td>
-
-              <td className={ui.td}>
-                <span
-                  className={
-                    ui.badge +
-                    " " +
-                    (r.delta < 0
-                      ? "border-red-700/60 bg-red-950/30 text-red-200"
-                      : r.delta > 0
-                      ? "border-emerald-700/60 bg-emerald-950/20 text-emerald-200"
-                      : "border-zinc-700 bg-zinc-950/20 text-zinc-200")
-                  }
-                >
-                  {r.delta}
-                </span>
+              <td className={ui.td + " " + (r.delta < 0 ? "text-red-400" : "text-emerald-400")}>
+                {r.delta}
               </td>
-
-              <td className={ui.td}>
-                <span
-                  className={
-                    ui.badge +
-                    " " +
-                    (r.saldo < 0
-                      ? "border-red-700/60 bg-red-950/30 text-red-200"
-                      : r.saldo > 0
-                      ? "border-emerald-700/60 bg-emerald-950/20 text-emerald-200"
-                      : "border-zinc-700 bg-zinc-950/20 text-zinc-200")
-                  }
-                >
-                  {r.saldo}
-                </span>
-              </td>
-
+              <td className={ui.td}>{r.saldo}</td>
               <td className={ui.td}>{r.urlaubstage.toFixed(2)}</td>
             </tr>
           ))}
@@ -565,21 +614,10 @@ export default function App() {
       </table>
     </div>
 
-    {/* Lists: Rohdaten (gefiltert) */}
-    <Lists
-      wochenEintraegeView={wochenEintraegeView}
-      abwesenheitenView={abwesenheitenView}
-      deleteWochenEintrag={deleteWochenEintrag}
-      deleteAbwesenheit={deleteAbwesenheitByIndex}
-    />
-
     {/* Zusammenfassung */}
-    <div className={`${ui.card} ${ui.cardBody}`}>
-      <div className="font-semibold">Zusammenfassung</div>
-
-      {errorMsg ? (
-        <div className={ui.alertError}>Fehler: {errorMsg}</div>
-      ) : s ? (
+    {s ? (
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Zusammenfassung</div>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>IST gesamt</div>
           <div className="text-right">{s.sumIst}</div>
@@ -602,11 +640,13 @@ export default function App() {
           <div className="font-semibold">End-Saldo</div>
           <div className="text-right font-semibold">{s.endSaldo}</div>
         </div>
-      ) : (
-        <div className={ui.alertInfo}>Keine Auswertung verfügbar.</div>
-      )}
-    </div>
+      </div>
+    ) : (
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Zusammenfassung</div>
+        <div className="text-sm text-zinc-400">Keine Auswertung verfügbar.</div>
+      </div>
+    )}
   </div>
 );
-
 }
