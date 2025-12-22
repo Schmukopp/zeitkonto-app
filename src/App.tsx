@@ -7,9 +7,9 @@ import type { Mitarbeiter, WochenEintrag, AbwesenheitEintrag, WochenAuswertung }
 import mitarbeiterData from "./data/mitarbeiter.json";
 import eintraegeData from "./data/eintraege.json";
 import abwesenheitenData from "./data/abwesenheiten.json";
+
 import { EntryAndAbsenceForms } from "./ui/Forms";
 import { Lists } from "./ui/Lists";
-
 
 // ===== Storage Keys =====
 const KEY_M = "zeitkonto.mitarbeiter";
@@ -26,9 +26,11 @@ function loadFromStorage<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+
 function saveToStorage<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
+
 function normalizeIsoWeek(input: string): string | null {
   const m = /^(\d{4})-W(\d{1,2})$/i.exec(input.trim());
   if (!m) return null;
@@ -37,17 +39,18 @@ function normalizeIsoWeek(input: string): string | null {
   if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 53) return null;
   return `${year}-W${String(weekNum).padStart(2, "0")}`;
 }
-function compareIsoWeek(a: string, b: string): number {
+
+function compareIsoWeek(a: string, b: string) {
   return a.localeCompare(b);
 }
+
 function eqId(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-// ===== UI-local Types (für Formulare) =====
+// ===== UI-local Types =====
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
 const WOCHENTAGE: WochenTag[] = ["mo", "di", "mi", "do", "fr"];
-type AbwesenheitsArt = "urlaub" | "krank" | "feiertag" | "unbezahlt";
 
 type Snapshot = {
   mitarbeiter: Mitarbeiter[];
@@ -57,15 +60,21 @@ type Snapshot = {
 };
 
 export default function App() {
-  // ===== Initialdaten aus JSON =====
+  // ===== Initialdaten =====
   const initialMitarbeiter = mitarbeiterData as Mitarbeiter[];
   const initialEintraege = eintraegeData as WochenEintrag[];
   const initialAbwesenheiten = abwesenheitenData as AbwesenheitEintrag[];
 
   // ===== State (persistiert) =====
-  const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>(() => loadFromStorage(KEY_M, initialMitarbeiter));
-  const [eintraege, setEintraege] = useState<WochenEintrag[]>(() => loadFromStorage(KEY_E, initialEintraege));
-  const [abwesenheiten, setAbwesenheiten] = useState<AbwesenheitEintrag[]>(() => loadFromStorage(KEY_A, initialAbwesenheiten));
+  const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>(() =>
+    loadFromStorage(KEY_M, initialMitarbeiter)
+  );
+  const [eintraege, setEintraege] = useState<WochenEintrag[]>(() =>
+    loadFromStorage(KEY_E, initialEintraege)
+  );
+  const [abwesenheiten, setAbwesenheiten] = useState<AbwesenheitEintrag[]>(() =>
+    loadFromStorage(KEY_A, initialAbwesenheiten)
+  );
 
   useEffect(() => saveToStorage(KEY_M, mitarbeiterListe), [mitarbeiterListe]);
   useEffect(() => saveToStorage(KEY_E, eintraege), [eintraege]);
@@ -92,6 +101,7 @@ export default function App() {
       return false;
     }
   });
+
   const [snapshotAt, setSnapshotAt] = useState<string>(() => {
     try {
       const raw = localStorage.getItem(KEY_SNAPSHOT);
@@ -187,7 +197,7 @@ export default function App() {
   if (mitarbeiterListe.length === 0) return <div className={ui.page}>Keine Mitarbeiter vorhanden.</div>;
   if (!mitarbeiter) return <div className={ui.page}>Kein Mitarbeiter gefunden.</div>;
 
-  // ===== Gefilterte Daten =====
+  // ===== Gefilterte Daten (für Tabelle + Listen) =====
   const eintraegeM = useMemo(() => {
     return eintraege
       .filter((e) => eqId(e.mitarbeiterId, mitarbeiter.id) && inRange(e.woche))
@@ -207,37 +217,30 @@ export default function App() {
       });
   }, [abwesenheiten, mitarbeiter.id, fromWoche, toWoche]);
 
-  // ===== A8: Wochen-Eintrag Form =====
-  const [newWoche, setNewWoche] = useState("2025-W50");
-  const [newIst, setNewIst] = useState<number>(40);
+  // ===== Aktionen: Wochen-Eintrag / Abwesenheit / Mitarbeiter =====
+  // (Die UI/States dafür liegen in EntryAndAbsenceForms – hier bleiben nur die "Speicher-Funktionen")
 
-  const normalizedNewWoche = normalizeIsoWeek(newWoche);
-  const willOverwrite =
-    !!normalizedNewWoche && eintraege.some((e) => eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === normalizedNewWoche);
-
-  const istInvalid = !Number.isFinite(newIst) || newIst < 0;
-
-  function addWochenEintrag() {
+  function addWochenEintrag(entry: WochenEintrag, willOverwrite: boolean) {
     setFormError(null);
     setFormInfo(null);
 
-    const w = normalizeIsoWeek(newWoche);
+    const w = normalizeIsoWeek(entry.woche);
     if (!w) {
       setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
       return;
     }
-    if (istInvalid) {
+    if (!Number.isFinite(entry.istStunden) || entry.istStunden < 0) {
       setFormError("IST-Stunden müssen eine Zahl >= 0 sein.");
       return;
     }
 
     saveSnapshot("vor Wochen-Eintrag");
 
-    const entry: WochenEintrag = { mitarbeiterId: mitarbeiter.id, woche: w, istStunden: newIst };
+    const clean: WochenEintrag = { ...entry, woche: w, mitarbeiterId: mitarbeiter.id };
 
     setEintraege((prev) => {
       const next = prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === w));
-      next.push(entry);
+      next.push(clean);
       next.sort((a, b) => {
         const idCmp = a.mitarbeiterId.localeCompare(b.mitarbeiterId);
         return idCmp !== 0 ? idCmp : compareIsoWeek(a.woche, b.woche);
@@ -245,7 +248,6 @@ export default function App() {
       return next;
     });
 
-    setNewWoche(w);
     setFormInfo(willOverwrite ? "Eintrag überschrieben." : "Eintrag gespeichert.");
   }
 
@@ -255,51 +257,39 @@ export default function App() {
     setFormInfo("Wochen-Eintrag gelöscht.");
   }
 
-  // ===== A9: Abwesenheit Form =====
-  const [abwWoche, setAbwWoche] = useState("2025-W50");
-  const [abwTag, setAbwTag] = useState<WochenTag>("mi");
-  const [abwArt, setAbwArt] = useState<AbwesenheitsArt>("urlaub");
-  const [abwStunden, setAbwStunden] = useState<number>(5);
-  const [abwError, setAbwError] = useState<string | null>(null);
-
-  function addAbwesenheit() {
-    setAbwError(null);
+  function addAbwesenheit(item: AbwesenheitEintrag) {
     setFormError(null);
     setFormInfo(null);
 
-    const w = normalizeIsoWeek(abwWoche);
+    const w = normalizeIsoWeek(item.woche);
     if (!w) {
-      setAbwError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
+      setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
       return;
     }
-    if (!Number.isFinite(abwStunden) || abwStunden < 0) {
-      setAbwError("Stunden müssen eine Zahl >= 0 sein.");
+    if (!Number.isFinite(item.stunden) || item.stunden < 0) {
+      setFormError("Stunden müssen eine Zahl >= 0 sein.");
       return;
     }
 
-    const tagesSoll = mitarbeiter.modell.tage[abwTag]?.sollStunden ?? 0;
+    const tagesSoll = mitarbeiter.modell.tage[item.tag]?.sollStunden ?? 0;
     if (tagesSoll <= 0) {
-      setAbwError(`Am ${abwTag.toUpperCase()} ist bei ${mitarbeiter.name} kein Arbeitstag (SOLL=0).`);
+      setFormError(`Am ${item.tag.toUpperCase()} ist bei ${mitarbeiter.name} kein Arbeitstag (SOLL=0).`);
       return;
     }
-    if (abwStunden > tagesSoll) {
-      setAbwError(`Abwesenheit (${abwStunden}h) darf Tages-SOLL (${tagesSoll}h) am ${abwTag.toUpperCase()} nicht überschreiten.`);
+    if (item.stunden > tagesSoll) {
+      setFormError(
+        `Abwesenheit (${item.stunden}h) darf Tages-SOLL (${tagesSoll}h) am ${item.tag.toUpperCase()} nicht überschreiten.`
+      );
       return;
     }
 
     saveSnapshot("vor Abwesenheit");
 
-    const item: AbwesenheitEintrag = {
-      mitarbeiterId: mitarbeiter.id,
-      woche: w,
-      tag: abwTag,
-      art: abwArt,
-      stunden: abwStunden,
-    };
+    const clean: AbwesenheitEintrag = { ...item, woche: w, mitarbeiterId: mitarbeiter.id };
 
     setAbwesenheiten((prev) => {
       const next = prev.slice();
-      next.push(item);
+      next.push(clean);
       next.sort((a, b) => {
         const idCmp = a.mitarbeiterId.localeCompare(b.mitarbeiterId);
         return idCmp !== 0 ? idCmp : compareIsoWeek(a.woche, b.woche);
@@ -307,7 +297,6 @@ export default function App() {
       return next;
     });
 
-    setAbwWoche(w);
     setFormInfo("Abwesenheit hinzugefügt.");
   }
 
@@ -333,7 +322,7 @@ export default function App() {
     setFormInfo("Abwesenheit gelöscht.");
   }
 
-  // ===== A10: Mitarbeiter verwalten =====
+  // Mitarbeiter
   const [newEmpId, setNewEmpId] = useState("");
   const [newEmpName, setNewEmpName] = useState("");
 
@@ -344,19 +333,11 @@ export default function App() {
     const id = newEmpId.trim();
     const name = newEmpName.trim();
 
-    if (!id) {
-      setFormError("Neue ID fehlt.");
-      return;
-    }
-    if (!name) {
-      setFormError("Neuer Name fehlt.");
-      return;
-    }
+    if (!id) return setFormError("Neue ID fehlt.");
+    if (!name) return setFormError("Neuer Name fehlt.");
+
     const exists = mitarbeiterListe.some((m) => eqId(m.id, id));
-    if (exists) {
-      setFormError("Diese ID existiert bereits.");
-      return;
-    }
+    if (exists) return setFormError("Diese ID existiert bereits.");
 
     saveSnapshot("vor Mitarbeiter anlegen");
 
@@ -392,7 +373,6 @@ export default function App() {
     setFormInfo("Mitarbeiter gelöscht.");
   }
 
-  // ===== A10.3 Arbeitszeitmodell bearbeiten =====
   function updateTagesRegel(tag: WochenTag, patch: Partial<{ sollStunden: number; urlaubswert: number }>) {
     saveSnapshot("vor Arbeitszeitmodell ändern");
 
@@ -400,27 +380,15 @@ export default function App() {
       prev.map((m) => {
         if (!eqId(m.id, mitarbeiter.id)) return m;
         const oldRule = m.modell.tage[tag];
-        const nextRule = {
-          ...oldRule,
-          ...patch,
-        };
-        return {
-          ...m,
-          modell: {
-            ...m.modell,
-            tage: {
-              ...m.modell.tage,
-              [tag]: nextRule,
-            },
-          },
-        };
+        const nextRule = { ...oldRule, ...patch };
+        return { ...m, modell: { ...m.modell, tage: { ...m.modell.tage, [tag]: nextRule } } };
       })
     );
 
     setFormInfo("Arbeitszeitmodell gespeichert.");
   }
 
-  // ===== Auswertung (sicher: kein Weißbildschirm) =====
+  // ===== Auswertung (sicher, kein Weißbildschirm) =====
   let rows: WochenAuswertung[] = [];
   let s: ReturnType<typeof zusammenfassung> | null = null;
   let errorMsg: string | null = null;
@@ -431,93 +399,99 @@ export default function App() {
   } catch (err) {
     errorMsg = err instanceof Error ? err.message : "Unbekannter Fehler";
   }
-  // ===== A8 Listen-Views (für Anzeige / Löschen) =====
-  const wochenEintraegeView = eintraegeM;
-  const abwesenheitenView = abwesenheitenM;
-
 
   // ===== UI =====
- return (
-  <div className={ui.page}>
-    {/* Header */}
-    <div className={ui.headerRow}>
-      <div>
-        <div className={ui.title}>Zeitkonto</div>
-        <div className={ui.subtitle}>{mitarbeiter ? mitarbeiter.name : "—"}</div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <button className={ui.btnSecondary} type="button" onClick={resetToDemoData}>
-          Reset (Demo-Daten)
-        </button>
-      </div>
-    </div>
-
-    {/* Steuerung */}
-    <div className={`${ui.card} ${ui.cardBody}`}>
-      <div className="font-semibold">Steuerung</div>
-
-      <div className="flex flex-wrap gap-6">
-        <div className="flex flex-col gap-1">
-          <label className={ui.label}>Mitarbeiter</label>
-          <select
-            className={ui.select}
-            value={mitarbeiterId}
-            onChange={(e) => setMitarbeiterId(e.target.value)}
-          >
-            {mitarbeiterListe.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+  return (
+    <div className={ui.page}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className={ui.title}>Zeitkonto</div>
+          <div className={ui.subtitle}>{mitarbeiter.name}</div>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label className={ui.label}>Von Woche</label>
-          <input
-            className={ui.input}
-            value={fromWoche}
-            onChange={(e) => setFromWoche(e.target.value)}
-            placeholder="2025-W01"
-          />
-          <div className={ui.hint}>Format: 2025-W05</div>
-        </div>
+        <div className="flex items-center gap-2">
+          <button className={ui.btnSecondary} type="button" onClick={() => saveSnapshot("manuell")}>
+            Snapshot speichern
+          </button>
 
-        <div className="flex flex-col gap-1">
-          <label className={ui.label}>Bis Woche</label>
-          <input
-            className={ui.input}
-            value={toWoche}
-            onChange={(e) => setToWoche(e.target.value)}
-            placeholder="2025-W53"
-          />
+          <button className={ui.btnSecondary} type="button" onClick={restoreSnapshot} disabled={!hasSnapshot}>
+            Snapshot laden
+          </button>
+
+          <button className={ui.btnSecondary} type="button" onClick={clearSnapshot} disabled={!hasSnapshot}>
+            Snapshot löschen
+          </button>
+
+          <button className={ui.btnSecondary} type="button" onClick={resetToDemoData}>
+            Reset (Demo-Daten)
+          </button>
         </div>
       </div>
 
-      {errorMsg ? <div className={ui.alertError}>Fehler: {errorMsg}</div> : null}
-    </div>
+      {snapshotAt ? <div className={ui.hint}>Snapshot: {snapshotAt}</div> : null}
 
-    {/* Eingaben (Formulare) */}
-    <div className="space-y-6">
+      {/* Steuerung */}
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Steuerung</div>
+
+        <div className="flex flex-wrap gap-6">
+          <div className="flex flex-col gap-1">
+            <label className={ui.label}>Mitarbeiter</label>
+            <select className={ui.select} value={mitarbeiterId} onChange={(e) => setMitarbeiterId(e.target.value)}>
+              {mitarbeiterListe.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className={ui.label}>Von Woche</label>
+            <input className={ui.input} value={fromWoche} onChange={(e) => setFromWoche(e.target.value)} placeholder="2025-W01" />
+            <div className={ui.hint}>Format: 2025-W05</div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className={ui.label}>Bis Woche</label>
+            <input className={ui.input} value={toWoche} onChange={(e) => setToWoche(e.target.value)} placeholder="2025-W53" />
+          </div>
+        </div>
+
+        {!rangeOk ? <div className="mt-3 text-sm text-amber-300">Hinweis: Zeitraum ist ungültig – Filter ist aktuell aus.</div> : null}
+        {errorMsg ? <div className="mt-3 text-sm text-red-300">Fehler: {errorMsg}</div> : null}
+        {formError ? <div className="mt-3 text-sm text-red-300">{formError}</div> : null}
+        {formInfo ? <div className="mt-3 text-sm text-emerald-300">{formInfo}</div> : null}
+      </div>
+
+      {/* Eingaben */}
       <div className={`${ui.card} ${ui.cardBody}`}>
         <div className="font-semibold">Eingaben</div>
         <div className={ui.subtitle}>
-          Wochen-Einträge und Abwesenheiten für <span className="text-zinc-200">{mitarbeiter?.name ?? "—"}</span>
+          Wochen-Einträge und Abwesenheiten für <span className="text-zinc-200">{mitarbeiter.name}</span>
         </div>
 
         <EntryAndAbsenceForms
           ui={ui}
           mitarbeiter={mitarbeiter}
-          mitarbeiterId={mitarbeiterId}
           eintraege={eintraege}
           abwesenheiten={abwesenheiten}
-          addWochenEintrag={addWochenEintrag}
-          addAbwesenheit={addAbwesenheit}
-          formError={formError}
-          formInfo={formInfo}
           normalizeIsoWeek={normalizeIsoWeek}
           eqId={eqId}
+          onAddWochenEintrag={(entry, willOverwrite) => addWochenEintrag(entry, willOverwrite)}
+          onAddAbwesenheit={(item) => addAbwesenheit(item)}
+        />
+      </div>
+
+      {/* Listen */}
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Aktuelle Listen (gefiltert)</div>
+        <Lists
+          wochenEintraegeView={eintraegeM}
+          abwesenheitenView={abwesenheitenM}
+          deleteWochenEintrag={deleteWochenEintrag}
+          deleteAbwesenheit={deleteAbwesenheitByIndex}
         />
       </div>
 
@@ -529,22 +503,12 @@ export default function App() {
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1">
             <label className={ui.label}>Neue ID</label>
-            <input
-              className={ui.input}
-              value={newEmpId}
-              onChange={(e) => setNewEmpId(e.target.value)}
-              placeholder="z.B. peter"
-            />
+            <input className={ui.input} value={newEmpId} onChange={(e) => setNewEmpId(e.target.value)} placeholder="z.B. peter" />
           </div>
 
           <div className="flex flex-col gap-1">
             <label className={ui.label}>Name</label>
-            <input
-              className={ui.input}
-              value={newEmpName}
-              onChange={(e) => setNewEmpName(e.target.value)}
-              placeholder="Peter Müller"
-            />
+            <input className={ui.input} value={newEmpName} onChange={(e) => setNewEmpName(e.target.value)} placeholder="Peter Müller" />
           </div>
 
           <button type="button" className={ui.btnPrimary} onClick={addMitarbeiter}>
@@ -554,13 +518,9 @@ export default function App() {
 
         <div className="pt-4 space-y-2">
           {mitarbeiterListe.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center justify-between border-t border-zinc-800 pt-2"
-            >
+            <div key={m.id} className="flex items-center justify-between border-t border-zinc-800 pt-2">
               <div className="text-sm">
-                <span className="font-medium">{m.name}</span>{" "}
-                <span className="text-zinc-500">({m.id})</span>
+                <span className="font-medium">{m.name}</span> <span className="text-zinc-500">({m.id})</span>
               </div>
 
               <button type="button" className={ui.btnDanger} onClick={() => deleteMitarbeiter(m.id)}>
@@ -570,94 +530,130 @@ export default function App() {
           ))}
         </div>
       </div>
-    </div>
 
-    {/* Tabelle */}
-    <div className={ui.tableWrap}>
-      <table className={ui.table}>
-        <thead className={ui.thead}>
-        <tr className="text-zinc-300">
-
-            <th className={ui.th}>Woche</th>
-<th className={ui.th + " text-right"}>IST</th>
-<th className={ui.th + " text-right"}>SOLL</th>
-<th className={ui.th + " text-right"}>Abw</th>
-<th className={ui.th + " text-right"}>eSOLL</th>
-<th className={ui.th + " text-right"}>Δ</th>
-<th className={ui.th + " text-right"}>Saldo</th>
-<th className={ui.th + " text-right"}>Urlaub</th>
-
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.woche} className={`${ui.tr} ${ui.trZebra} ${ui.trHover}`}>
-              <td className={ui.tdStrong}>{r.woche}</td>
-<td className={ui.td + " text-right tabular-nums"}>{r.istStunden}</td>
-<td className={ui.td + " text-right tabular-nums"}>{r.sollStunden}</td>
-<td className={ui.td + " text-right tabular-nums"}>{r.abwesenheitStunden}</td>
-<td className={ui.td + " text-right tabular-nums"}>{r.effektivesSoll}</td>
-
-<td
-  className={
-    ui.td +
-    " text-right tabular-nums " +
-    (r.delta < 0 ? "text-red-300" : "text-emerald-300")
-  }
->
-  {r.delta}
-</td>
-
-<td className={ui.td + " text-right tabular-nums"}>{r.saldo}</td>
-<td className={ui.td + " text-right tabular-nums"}>{r.urlaubstage.toFixed(2)}</td>
-
-            </tr>
-          ))}
-
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={8} className="p-6 text-center text-zinc-500">
-                Keine Daten im gewählten Zeitraum
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-
-    {/* Zusammenfassung */}
-    {s ? (
+      {/* Arbeitszeitmodell */}
       <div className={`${ui.card} ${ui.cardBody}`}>
-        <div className="font-semibold">Zusammenfassung</div>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div>IST gesamt</div>
-          <div className="text-right tabular-nums">{s.sumIst}</div>
+        <div className="font-semibold">Arbeitszeitmodell (Wochentage)</div>
+        <div className={ui.subtitle}>Sollstunden und Urlaubswert pro Tag für: {mitarbeiter.name}</div>
 
-          <div>SOLL gesamt</div>
-          <div className="text-right tabular-nums">{s.sumSoll}</div>
-
-          <div>eSOLL gesamt</div>
-          <div className="text-right tabular-nums">{s.sumEffSoll}</div>
-
-          <div>Abwesenheit</div>
-          <div className="text-right tabular-num">{s.sumAbw}</div>
-          
-          <div>Δ gesamt</div>
-          <div className="text-right tabular-num">{s.sumDelta}</div>
-
-          <div>Urlaub (Tage)</div>
-          <div className="text-right tabular-num">{s.sumUrlaubTage.toFixed(2)}</div>
-
-          <div className="font-semibold">End-Saldo</div>
-          <div className="text-right tabular-num font-semibold">{s.endSaldo}</div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="text-zinc-300">
+              <tr>
+                <th className="p-2 text-left">Tag</th>
+                <th className="p-2 text-right">SOLL (h)</th>
+                <th className="p-2 text-right">Urlaubswert</th>
+              </tr>
+            </thead>
+            <tbody>
+              {WOCHENTAGE.map((t) => {
+                const rule = mitarbeiter.modell.tage[t];
+                return (
+                  <tr key={t} className="border-t border-zinc-800">
+                    <td className="p-2 font-medium">{t.toUpperCase()}</td>
+                    <td className="p-2 text-right">
+                      <input
+                        className={`${ui.numberInput} w-24 text-right`}
+                        type="number"
+                        step="0.5"
+                        min={0}
+                        value={rule?.sollStunden ?? 0}
+                        onChange={(e) => updateTagesRegel(t, { sollStunden: Number(e.target.value) })}
+                      />
+                    </td>
+                    <td className="p-2 text-right">
+                      <input
+                        className={`${ui.numberInput} w-24 text-right`}
+                        type="number"
+                        step="0.25"
+                        min={0}
+                        value={rule?.urlaubswert ?? 0}
+                        onChange={(e) => updateTagesRegel(t, { urlaubswert: Number(e.target.value) })}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+
+        <div className={ui.hint}>Tipp: Wenn ein Tag SOLL=0 ist, ist das ein „Nicht-Arbeitstag“. Dann darf dort keine Abwesenheit erfasst werden.</div>
       </div>
-    ) : (
+
+      {/* Tabelle */}
+      <div className={ui.tableWrap}>
+        <table className={ui.table}>
+          <thead className={ui.thead}>
+            <tr className="text-zinc-300">
+              <th className={ui.th}>Woche</th>
+              <th className={ui.th + " text-right"}>IST</th>
+              <th className={ui.th + " text-right"}>SOLL</th>
+              <th className={ui.th + " text-right"}>Abw</th>
+              <th className={ui.th + " text-right"}>eSOLL</th>
+              <th className={ui.th + " text-right"}>Δ</th>
+              <th className={ui.th + " text-right"}>Saldo</th>
+              <th className={ui.th + " text-right"}>Urlaub</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.woche} className={ui.tr}>
+                <td className={ui.tdStrong}>{r.woche}</td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.istStunden}</td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.sollStunden}</td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.abwesenheitStunden}</td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.effektivesSoll}</td>
+                <td className={ui.td + " text-right tabular-nums " + (r.delta < 0 ? "text-red-300" : "text-emerald-300")}>
+                  {r.delta}
+                </td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.saldo}</td>
+                <td className={ui.td + " text-right tabular-nums"}>{r.urlaubstage.toFixed(2)}</td>
+              </tr>
+            ))}
+
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={8} className="p-6 text-center text-zinc-500">
+                  Keine Daten im gewählten Zeitraum
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Zusammenfassung */}
       <div className={`${ui.card} ${ui.cardBody}`}>
         <div className="font-semibold">Zusammenfassung</div>
-        <div className="text-sm text-zinc-400">Keine Auswertung verfügbar.</div>
+
+        {s ? (
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div>IST gesamt</div>
+            <div className="text-right tabular-nums">{s.sumIst}</div>
+
+            <div>SOLL gesamt</div>
+            <div className="text-right tabular-nums">{s.sumSoll}</div>
+
+            <div>eSOLL gesamt</div>
+            <div className="text-right tabular-nums">{s.sumEffSoll}</div>
+
+            <div>Abwesenheit</div>
+            <div className="text-right tabular-nums">{s.sumAbw}</div>
+
+            <div>Δ gesamt</div>
+            <div className="text-right tabular-nums">{s.sumDelta}</div>
+
+            <div>Urlaub (Tage)</div>
+            <div className="text-right tabular-nums">{s.sumUrlaubTage.toFixed(2)}</div>
+
+            <div className="font-semibold">End-Saldo</div>
+            <div className="text-right tabular-nums font-semibold">{s.endSaldo}</div>
+          </div>
+        ) : (
+          <div className="text-sm text-zinc-400">Keine Auswertung verfügbar.</div>
+        )}
       </div>
-    )}
-  </div>
-);
+    </div>
+  );
 }
