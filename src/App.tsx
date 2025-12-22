@@ -32,7 +32,7 @@ function saveToStorage<T>(key: string, value: T) {
 }
 
 function normalizeIsoWeek(input: string): string | null {
-  const m = /^(\d{4})-W(\d{1,2})$/i.exec(input.trim());
+  const m = /^(\d{4})-W(\d{1,2})$/i.exec((input ?? "").trim());
   if (!m) return null;
   const year = m[1];
   const weekNum = Number(m[2]);
@@ -45,10 +45,9 @@ function compareIsoWeek(a: string, b: string) {
 }
 
 function eqId(a: string, b: string) {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 }
 
-// ===== UI-local Types =====
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
 const WOCHENTAGE: WochenTag[] = ["mo", "di", "mi", "do", "fr"];
 
@@ -65,7 +64,7 @@ export default function App() {
   const initialEintraege = eintraegeData as WochenEintrag[];
   const initialAbwesenheiten = abwesenheitenData as AbwesenheitEintrag[];
 
-  // ===== State (persistiert) =====
+  // ===== Persistierte States =====
   const [mitarbeiterListe, setMitarbeiterListe] = useState<Mitarbeiter[]>(() =>
     loadFromStorage(KEY_M, initialMitarbeiter)
   );
@@ -119,7 +118,7 @@ export default function App() {
         mitarbeiter: mitarbeiterListe,
         eintraege,
         abwesenheiten,
-        savedAt: new Date().toISOString(),
+        savedAt: new Date().toISOString()
       };
       localStorage.setItem(KEY_SNAPSHOT, JSON.stringify(snap));
       setHasSnapshot(true);
@@ -133,10 +132,7 @@ export default function App() {
   function restoreSnapshot() {
     try {
       const raw = localStorage.getItem(KEY_SNAPSHOT);
-      if (!raw) {
-        setFormError("Kein Snapshot vorhanden.");
-        return;
-      }
+      if (!raw) return setFormError("Kein Snapshot vorhanden.");
       const snap = JSON.parse(raw) as Snapshot;
       setMitarbeiterListe(snap.mitarbeiter);
       setEintraege(snap.eintraege);
@@ -174,15 +170,12 @@ export default function App() {
   const [toWoche, setToWoche] = useState("2025-W53");
 
   useEffect(() => {
-    if (mitarbeiterListe.length === 0) {
-      setMitarbeiterId("");
-      return;
-    }
+    if (mitarbeiterListe.length === 0) return;
     const exists = mitarbeiterListe.some((m) => m.id === mitarbeiterId);
     if (!exists) setMitarbeiterId(mitarbeiterListe[0]!.id);
   }, [mitarbeiterListe, mitarbeiterId]);
 
-  const mitarbeiter = mitarbeiterListe.find((m) => m.id === mitarbeiterId);
+  const mitarbeiter = mitarbeiterListe.find((m) => m.id === mitarbeiterId) ?? null;
 
   const fromN = normalizeIsoWeek(fromWoche);
   const toN = normalizeIsoWeek(toWoche);
@@ -194,18 +187,17 @@ export default function App() {
     return compareIsoWeek(wn, fromN!) >= 0 && compareIsoWeek(wn, toN!) <= 0;
   };
 
-  if (mitarbeiterListe.length === 0) return <div className={ui.page}>Keine Mitarbeiter vorhanden.</div>;
-  if (!mitarbeiter) return <div className={ui.page}>Kein Mitarbeiter gefunden.</div>;
-
-  // ===== Gefilterte Daten (für Tabelle + Listen) =====
+  // ===== Gefilterte Views =====
   const eintraegeM = useMemo(() => {
+    if (!mitarbeiter) return [];
     return eintraege
       .filter((e) => eqId(e.mitarbeiterId, mitarbeiter.id) && inRange(e.woche))
       .slice()
       .sort((a, b) => compareIsoWeek(a.woche, b.woche));
-  }, [eintraege, mitarbeiter.id, fromWoche, toWoche]);
+  }, [eintraege, mitarbeiter, fromWoche, toWoche]);
 
   const abwesenheitenM = useMemo(() => {
+    if (!mitarbeiter) return [];
     const order: Record<WochenTag, number> = { mo: 1, di: 2, mi: 3, do: 4, fr: 5 };
     return abwesenheiten
       .filter((a) => eqId(a.mitarbeiterId, mitarbeiter.id) && inRange(a.woche))
@@ -215,32 +207,46 @@ export default function App() {
         if (w !== 0) return w;
         return (order[a.tag as WochenTag] ?? 99) - (order[b.tag as WochenTag] ?? 99);
       });
-  }, [abwesenheiten, mitarbeiter.id, fromWoche, toWoche]);
+  }, [abwesenheiten, mitarbeiter, fromWoche, toWoche]);
 
-  // ===== Aktionen: Wochen-Eintrag / Abwesenheit / Mitarbeiter =====
-  // (Die UI/States dafür liegen in EntryAndAbsenceForms – hier bleiben nur die "Speicher-Funktionen")
+  // ===== A8 Forms State (controlled, passend zu deiner Forms.tsx) =====
+  const [newWoche, setNewWoche] = useState("");
+  const normalizedNewWoche = normalizeIsoWeek(newWoche);
 
-  function addWochenEintrag(entry: WochenEintrag, willOverwrite: boolean) {
+  const [newIst, setNewIst] = useState<number>(0);
+
+  const willOverwrite = useMemo(() => {
+    if (!mitarbeiter || !normalizedNewWoche) return false;
+    return eintraege.some((e) => eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === normalizedNewWoche);
+  }, [eintraege, mitarbeiter, normalizedNewWoche]);
+
+  const istInvalid = !Number.isFinite(newIst) || newIst < 0;
+
+  const [abwWoche, setAbwWoche] = useState("");
+  const [abwTag, setAbwTag] = useState<WochenTag>("mo");
+  const [abwArt, setAbwArt] = useState<"urlaub" | "krank" | "feiertag" | "unbezahlt">("urlaub");
+  const [abwStunden, setAbwStunden] = useState<number>(0);
+
+  function addWochenEintrag() {
+    if (!mitarbeiter) return;
+
     setFormError(null);
     setFormInfo(null);
 
-    const w = normalizeIsoWeek(entry.woche);
-    if (!w) {
-      setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
-      return;
-    }
-    if (!Number.isFinite(entry.istStunden) || entry.istStunden < 0) {
-      setFormError("IST-Stunden müssen eine Zahl >= 0 sein.");
-      return;
-    }
+    if (!normalizedNewWoche) return setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
+    if (istInvalid) return setFormError("IST-Stunden müssen eine Zahl >= 0 sein.");
 
     saveSnapshot("vor Wochen-Eintrag");
 
-    const clean: WochenEintrag = { ...entry, woche: w, mitarbeiterId: mitarbeiter.id };
+    const entry: WochenEintrag = {
+      mitarbeiterId: mitarbeiter.id,
+      woche: normalizedNewWoche,
+      istStunden: newIst
+    };
 
     setEintraege((prev) => {
-      const next = prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === w));
-      next.push(clean);
+      const next = prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === normalizedNewWoche));
+      next.push(entry);
       next.sort((a, b) => {
         const idCmp = a.mitarbeiterId.localeCompare(b.mitarbeiterId);
         return idCmp !== 0 ? idCmp : compareIsoWeek(a.woche, b.woche);
@@ -249,47 +255,40 @@ export default function App() {
     });
 
     setFormInfo(willOverwrite ? "Eintrag überschrieben." : "Eintrag gespeichert.");
+    setNewWoche("");
+    setNewIst(0);
   }
 
-  function deleteWochenEintrag(woche: string) {
-    saveSnapshot("vor Wochen-Eintrag löschen");
-    setEintraege((prev) => prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === woche)));
-    setFormInfo("Wochen-Eintrag gelöscht.");
-  }
+  function addAbwesenheit() {
+    if (!mitarbeiter) return;
 
-  function addAbwesenheit(item: AbwesenheitEintrag) {
     setFormError(null);
     setFormInfo(null);
 
-    const w = normalizeIsoWeek(item.woche);
-    if (!w) {
-      setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
-      return;
-    }
-    if (!Number.isFinite(item.stunden) || item.stunden < 0) {
-      setFormError("Stunden müssen eine Zahl >= 0 sein.");
-      return;
-    }
+    const w = normalizeIsoWeek(abwWoche);
+    if (!w) return setFormError("Woche ungültig. Format: YYYY-WNN (z.B. 2025-W05).");
+    if (!Number.isFinite(abwStunden) || abwStunden < 0) return setFormError("Stunden müssen eine Zahl >= 0 sein.");
 
-    const tagesSoll = mitarbeiter.modell.tage[item.tag]?.sollStunden ?? 0;
-    if (tagesSoll <= 0) {
-      setFormError(`Am ${item.tag.toUpperCase()} ist bei ${mitarbeiter.name} kein Arbeitstag (SOLL=0).`);
-      return;
-    }
-    if (item.stunden > tagesSoll) {
-      setFormError(
-        `Abwesenheit (${item.stunden}h) darf Tages-SOLL (${tagesSoll}h) am ${item.tag.toUpperCase()} nicht überschreiten.`
+    const tagesSoll = mitarbeiter.modell.tage[abwTag]?.sollStunden ?? 0;
+    if (tagesSoll <= 0) return setFormError(`Am ${abwTag.toUpperCase()} ist bei ${mitarbeiter.name} kein Arbeitstag (SOLL=0).`);
+    if (abwStunden > tagesSoll)
+      return setFormError(
+        `Abwesenheit (${abwStunden}h) darf Tages-SOLL (${tagesSoll}h) am ${abwTag.toUpperCase()} nicht überschreiten.`
       );
-      return;
-    }
 
     saveSnapshot("vor Abwesenheit");
 
-    const clean: AbwesenheitEintrag = { ...item, woche: w, mitarbeiterId: mitarbeiter.id };
+    const item: AbwesenheitEintrag = {
+      mitarbeiterId: mitarbeiter.id,
+      woche: w,
+      tag: abwTag,
+      art: abwArt,
+      stunden: abwStunden
+    };
 
     setAbwesenheiten((prev) => {
       const next = prev.slice();
-      next.push(clean);
+      next.push(item);
       next.sort((a, b) => {
         const idCmp = a.mitarbeiterId.localeCompare(b.mitarbeiterId);
         return idCmp !== 0 ? idCmp : compareIsoWeek(a.woche, b.woche);
@@ -298,6 +297,17 @@ export default function App() {
     });
 
     setFormInfo("Abwesenheit hinzugefügt.");
+    setAbwWoche("");
+    setAbwStunden(0);
+    setAbwArt("urlaub");
+    setAbwTag("mo");
+  }
+
+  function deleteWochenEintrag(woche: string) {
+    if (!mitarbeiter) return;
+    saveSnapshot("vor Wochen-Eintrag löschen");
+    setEintraege((prev) => prev.filter((e) => !(eqId(e.mitarbeiterId, mitarbeiter.id) && e.woche === woche)));
+    setFormInfo("Wochen-Eintrag gelöscht.");
   }
 
   function deleteAbwesenheitByIndex(indexInFiltered: number) {
@@ -322,7 +332,7 @@ export default function App() {
     setFormInfo("Abwesenheit gelöscht.");
   }
 
-  // Mitarbeiter
+  // ===== Mitarbeiter anlegen/löschen + Modell bearbeiten =====
   const [newEmpId, setNewEmpId] = useState("");
   const [newEmpName, setNewEmpName] = useState("");
 
@@ -332,7 +342,6 @@ export default function App() {
 
     const id = newEmpId.trim();
     const name = newEmpName.trim();
-
     if (!id) return setFormError("Neue ID fehlt.");
     if (!name) return setFormError("Neuer Name fehlt.");
 
@@ -351,9 +360,9 @@ export default function App() {
           di: { sollStunden: 8, urlaubswert: 1.0 },
           mi: { sollStunden: 8, urlaubswert: 1.0 },
           do: { sollStunden: 8, urlaubswert: 1.0 },
-          fr: { sollStunden: 8, urlaubswert: 1.0 },
-        },
-      },
+          fr: { sollStunden: 8, urlaubswert: 1.0 }
+        }
+      }
     };
 
     setMitarbeiterListe((prev) => [...prev, base]);
@@ -365,15 +374,14 @@ export default function App() {
 
   function deleteMitarbeiter(id: string) {
     saveSnapshot("vor Mitarbeiter löschen");
-
     setMitarbeiterListe((prev) => prev.filter((m) => !eqId(m.id, id)));
     setEintraege((prev) => prev.filter((e) => !eqId(e.mitarbeiterId, id)));
     setAbwesenheiten((prev) => prev.filter((a) => !eqId(a.mitarbeiterId, id)));
-
     setFormInfo("Mitarbeiter gelöscht.");
   }
 
   function updateTagesRegel(tag: WochenTag, patch: Partial<{ sollStunden: number; urlaubswert: number }>) {
+    if (!mitarbeiter) return;
     saveSnapshot("vor Arbeitszeitmodell ändern");
 
     setMitarbeiterListe((prev) =>
@@ -388,19 +396,23 @@ export default function App() {
     setFormInfo("Arbeitszeitmodell gespeichert.");
   }
 
-  // ===== Auswertung (sicher, kein Weißbildschirm) =====
+  // ===== Auswertung (safe) =====
   let rows: WochenAuswertung[] = [];
   let s: ReturnType<typeof zusammenfassung> | null = null;
   let errorMsg: string | null = null;
 
-  try {
-    rows = zeitkontoProMitarbeiter(mitarbeiter, eintraegeM, abwesenheitenM);
-    s = zusammenfassung(rows);
-  } catch (err) {
-    errorMsg = err instanceof Error ? err.message : "Unbekannter Fehler";
+  if (mitarbeiter) {
+    try {
+      rows = zeitkontoProMitarbeiter(mitarbeiter, eintraegeM, abwesenheitenM);
+      s = zusammenfassung(rows);
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : "Unbekannter Fehler";
+    }
   }
 
   // ===== UI =====
+  if (!mitarbeiter) return <div className={ui.page}>Kein Mitarbeiter gefunden.</div>;
+
   return (
     <div className={ui.page}>
       {/* Header */}
@@ -414,15 +426,12 @@ export default function App() {
           <button className={ui.btnSecondary} type="button" onClick={() => saveSnapshot("manuell")}>
             Snapshot speichern
           </button>
-
           <button className={ui.btnSecondary} type="button" onClick={restoreSnapshot} disabled={!hasSnapshot}>
             Snapshot laden
           </button>
-
           <button className={ui.btnSecondary} type="button" onClick={clearSnapshot} disabled={!hasSnapshot}>
             Snapshot löschen
           </button>
-
           <button className={ui.btnSecondary} type="button" onClick={resetToDemoData}>
             Reset (Demo-Daten)
           </button>
@@ -461,28 +470,33 @@ export default function App() {
 
         {!rangeOk ? <div className="mt-3 text-sm text-amber-300">Hinweis: Zeitraum ist ungültig – Filter ist aktuell aus.</div> : null}
         {errorMsg ? <div className="mt-3 text-sm text-red-300">Fehler: {errorMsg}</div> : null}
-        {formError ? <div className="mt-3 text-sm text-red-300">{formError}</div> : null}
-        {formInfo ? <div className="mt-3 text-sm text-emerald-300">{formInfo}</div> : null}
       </div>
 
-      {/* Eingaben */}
-      <div className={`${ui.card} ${ui.cardBody}`}>
-        <div className="font-semibold">Eingaben</div>
-        <div className={ui.subtitle}>
-          Wochen-Einträge und Abwesenheiten für <span className="text-zinc-200">{mitarbeiter.name}</span>
-        </div>
-
-        <EntryAndAbsenceForms
-          ui={ui}
-          mitarbeiter={mitarbeiter}
-          eintraege={eintraege}
-          abwesenheiten={abwesenheiten}
-          normalizeIsoWeek={normalizeIsoWeek}
-          eqId={eqId}
-          onAddWochenEintrag={(entry, willOverwrite) => addWochenEintrag(entry, willOverwrite)}
-          onAddAbwesenheit={(item) => addAbwesenheit(item)}
-        />
-      </div>
+      {/* Eingaben (Forms.tsx controlled) */}
+      <EntryAndAbsenceForms
+        ui={ui}
+        mitarbeiter={mitarbeiter}
+        newWoche={newWoche}
+        setNewWoche={setNewWoche}
+        normalizedNewWoche={normalizedNewWoche}
+        willOverwrite={willOverwrite}
+        newIst={newIst}
+        setNewIst={setNewIst}
+        istInvalid={istInvalid}
+        addWochenEintrag={addWochenEintrag}
+        abwWoche={abwWoche}
+        setAbwWoche={setAbwWoche}
+        abwTag={abwTag}
+        setAbwTag={setAbwTag}
+        abwArt={abwArt}
+        setAbwArt={setAbwArt}
+        abwStunden={abwStunden}
+        setAbwStunden={setAbwStunden}
+        addAbwesenheit={addAbwesenheit}
+        formError={formError}
+        formInfo={formInfo}
+        normalizeIsoWeek={normalizeIsoWeek}
+      />
 
       {/* Listen */}
       <div className={`${ui.card} ${ui.cardBody}`}>
@@ -578,7 +592,9 @@ export default function App() {
           </table>
         </div>
 
-        <div className={ui.hint}>Tipp: Wenn ein Tag SOLL=0 ist, ist das ein „Nicht-Arbeitstag“. Dann darf dort keine Abwesenheit erfasst werden.</div>
+        <div className={ui.hint}>
+          Tipp: Wenn ein Tag SOLL=0 ist, ist das ein Nicht-Arbeitstag. Dann darf dort keine Abwesenheit erfasst werden.
+        </div>
       </div>
 
       {/* Tabelle */}
