@@ -1,46 +1,114 @@
-import { ui } from "./ui";
-import { Section } from "./Section";
+import React, { useMemo, useState } from "react";
+import type { AbwesenheitEintrag, Mitarbeiter, WochenEintrag } from "@core/models/types";
 
-import { TwoCol } from "./TwoCol";
+/**
+ * EntryAndAbsenceForms
+ * - robust gegen fehlende Props (keine whitescreens)
+ * - nutzt addWochenEintrag / addAbwesenheit aus App
+ */
+
+type UI = {
+  card: string;
+  cardBody: string;
+  label: string;
+  hint: string;
+  input: string;
+  select: string;
+  numberInput: string;
+  btnPrimary: string;
+  btnSecondary: string;
+  alertError: string;
+  alertInfo: string;
+};
 
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
 const WOCHENTAGE: WochenTag[] = ["mo", "di", "mi", "do", "fr"];
+
 type AbwesenheitsArt = "urlaub" | "krank" | "feiertag" | "unbezahlt";
 
-export function EntryAndAbsenceForms(props: {
-  // Wochen-Eintrag
-  newWoche: string;
-  setNewWoche: (v: string) => void;
-  normalizedNewWoche: string | null;
-  willOverwrite: boolean;
-  newIst: number;
-  setNewIst: (v: number) => void;
-  istInvalid: boolean;
-  normalizeIsoWeek: (v: string) => string | null;
-  addWochenEintrag: () => void;
+type Props = {
+  ui: UI;
 
-  // Abwesenheit
-  abwWoche: string;
-  setAbwWoche: (v: string) => void;
-  abwTag: WochenTag;
-  setAbwTag: (v: WochenTag) => void;
-  abwArt: AbwesenheitsArt;
-  setAbwArt: (v: AbwesenheitsArt) => void;
-  abwStunden: number;
-  setAbwStunden: (v: number) => void;
-  addAbwesenheit: () => void;
-  abwError: string | null;
-}) {
-  const p = props;
+  mitarbeiter: Mitarbeiter;
+  mitarbeiterId: string;
+
+  // aktuelle Daten (State aus App)
+  eintraege: WochenEintrag[];
+  abwesenheiten: AbwesenheitEintrag[];
+
+  // Aktionen (aus App)
+  addWochenEintrag: (wocheIso: string, istStunden: number) => void;
+  addAbwesenheit: (wocheIso: string, tag: WochenTag, art: AbwesenheitsArt, stunden: number) => void;
+
+  // Messages (aus App)
+  formError?: string | null;
+  formInfo?: string | null;
+
+  // Helfer (aus App)
+  normalizeIsoWeek: (input: string) => string | null;
+  eqId: (a: string, b: string) => boolean;
+};
+
+export function EntryAndAbsenceForms(props: Props) {
+  const {
+    ui,
+    mitarbeiter,
+    mitarbeiterId,
+    eintraege,
+    abwesenheiten,
+    addWochenEintrag,
+    addAbwesenheit,
+    formError,
+    formInfo,
+    normalizeIsoWeek,
+  } = props;
+
+  // ===== Lokale Form-States =====
+  const [newWoche, setNewWoche] = useState<string>("");
+  const [newIst, setNewIst] = useState<number>(0);
+
+  const [abwWoche, setAbwWoche] = useState<string>("");
+  const [abwTag, setAbwTag] = useState<WochenTag>("mo");
+  const [abwArt, setAbwArt] = useState<AbwesenheitsArt>("urlaub");
+  const [abwStunden, setAbwStunden] = useState<number>(0);
+
+  // ===== Abgeleitet: ISO-Woche normalisieren + overwrite check =====
+  const normalizedNewWoche = useMemo(() => normalizeIsoWeek(newWoche) ?? null, [newWoche, normalizeIsoWeek]);
+
+  const willOverwrite = useMemo(() => {
+    if (!normalizedNewWoche) return false;
+    return (eintraege ?? []).some((e) => e.mitarbeiterId === mitarbeiterId && e.woche === normalizedNewWoche);
+  }, [eintraege, mitarbeiterId, normalizedNewWoche]);
+
+  // ===== Submit handler =====
+  function onAddWeek() {
+    const n = normalizeIsoWeek(newWoche);
+    if (!n) return; // App zeigt i.d.R. eigene Meldung, wir crashen nicht
+    addWochenEintrag(n, Number(newIst));
+    setNewWoche(n);
+  }
+
+  function onAddAbsence() {
+    const n = normalizeIsoWeek(abwWoche);
+    if (!n) return;
+    addAbwesenheit(n, abwTag, abwArt, Number(abwStunden));
+    setAbwWoche(n);
+  }
 
   return (
-    <TwoCol>
-      <Section title="Wochen-Eintrag hinzufügen">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Wochen-Eintrag hinzufügen */}
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Wochen-Eintrag hinzufügen</div>
+        <div className={ui.hint}>
+          Für: <span className="text-zinc-200">{mitarbeiter?.name ?? "—"}</span>
+        </div>
+
         <form
           className="flex flex-wrap items-end gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            p.addWochenEintrag();
+            onAddWeek();
           }}
         >
           <div className="flex flex-col gap-1">
@@ -48,14 +116,14 @@ export function EntryAndAbsenceForms(props: {
             <input
               className={
                 ui.input +
-                " w-36 " +
-                (p.newWoche.trim().length > 0 && !p.normalizedNewWoche ? "border-red-500" : "")
+                " w-40 " +
+                ((newWoche ?? "").trim().length > 0 && !normalizedNewWoche ? "border-red-400" : "")
               }
-              value={p.newWoche}
-              onChange={(e) => p.setNewWoche(e.target.value)}
+              value={newWoche}
+              onChange={(e) => setNewWoche(e.target.value)}
               onBlur={() => {
-                const n = p.normalizeIsoWeek(p.newWoche);
-                if (n) p.setNewWoche(n);
+                const n = normalizeIsoWeek(newWoche);
+                if (n) setNewWoche(n);
               }}
               placeholder="2025-W50"
             />
@@ -64,45 +132,63 @@ export function EntryAndAbsenceForms(props: {
           <div className="flex flex-col gap-1">
             <label className={ui.label}>IST-Stunden</label>
             <input
-              className={ui.numberInput + " w-28 " + (p.istInvalid ? "border-red-500" : "")}
+              className={ui.numberInput + " w-28"}
               type="number"
               step="0.5"
               min={0}
-              value={Number.isFinite(p.newIst) ? p.newIst : 0}
-              onChange={(e) => p.setNewIst(Number(e.target.value))}
+              value={Number.isFinite(newIst) ? newIst : 0}
+              onChange={(e) => setNewIst(Number(e.target.value))}
             />
-            {p.istInvalid ? <div className="text-xs text-red-300">Bitte Zahl ≥ 0.</div> : null}
           </div>
 
-          <button className={ui.btnPrimary} type="submit" disabled={!p.normalizedNewWoche || p.istInvalid}>
+          <button className={ui.btnPrimary} type="submit">
             Hinzufügen
           </button>
+
+          <div className="w-full">
+            <div className={ui.hint}>
+              {normalizedNewWoche ? (
+                willOverwrite ? (
+                  <span className="text-amber-300">
+                    Achtung: Für diese Woche existiert bereits ein Eintrag – er wird überschrieben.
+                  </span>
+                ) : (
+                  <span className="text-emerald-300">Neuer Eintrag – wird hinzugefügt.</span>
+                )
+              ) : (
+                <span>Format: YYYY-WNN (z.B. 2025-W05)</span>
+              )}
+            </div>
+
+            {formError ? <div className={ui.alertError}>Fehler: {formError}</div> : null}
+            {formInfo ? <div className={ui.alertInfo}>{formInfo}</div> : null}
+          </div>
         </form>
+      </div>
 
+      {/* Abwesenheit hinzufügen */}
+      <div className={`${ui.card} ${ui.cardBody}`}>
+        <div className="font-semibold">Abwesenheit hinzufügen</div>
         <div className={ui.hint}>
-          {p.normalizedNewWoche ? (
-            p.willOverwrite ? (
-              <span className="text-amber-300">Achtung: Eintrag existiert – wird überschrieben.</span>
-            ) : (
-              <span className="text-emerald-300">Neuer Eintrag – wird hinzugefügt.</span>
-            )
-          ) : (
-            <span>Format: YYYY-WNN (z.B. 2025-W05)</span>
-          )}
+          Für: <span className="text-zinc-200">{mitarbeiter?.name ?? "—"}</span>
         </div>
-      </Section>
 
-      <Section title="Abwesenheit hinzufügen">
-        <div className="flex flex-wrap items-end gap-3">
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAddAbsence();
+          }}
+        >
           <div className="flex flex-col gap-1">
-            <label className={ui.label}>Woche</label>
+            <label className={ui.label}>Woche (ISO)</label>
             <input
-              className={ui.input + " w-36"}
-              value={p.abwWoche}
-              onChange={(e) => p.setAbwWoche(e.target.value)}
+              className={ui.input + " w-40"}
+              value={abwWoche}
+              onChange={(e) => setAbwWoche(e.target.value)}
               onBlur={() => {
-                const n = p.normalizeIsoWeek(p.abwWoche);
-                if (n) p.setAbwWoche(n);
+                const n = normalizeIsoWeek(abwWoche);
+                if (n) setAbwWoche(n);
               }}
               placeholder="2025-W50"
             />
@@ -110,7 +196,7 @@ export function EntryAndAbsenceForms(props: {
 
           <div className="flex flex-col gap-1">
             <label className={ui.label}>Tag</label>
-            <select className={ui.select} value={p.abwTag} onChange={(e) => p.setAbwTag(e.target.value as WochenTag)}>
+            <select className={ui.select + " w-28"} value={abwTag} onChange={(e) => setAbwTag(e.target.value as WochenTag)}>
               {WOCHENTAGE.map((t) => (
                 <option key={t} value={t}>
                   {t.toUpperCase()}
@@ -122,14 +208,14 @@ export function EntryAndAbsenceForms(props: {
           <div className="flex flex-col gap-1">
             <label className={ui.label}>Art</label>
             <select
-              className={ui.select}
-              value={p.abwArt}
-              onChange={(e) => p.setAbwArt(e.target.value as AbwesenheitsArt)}
+              className={ui.select + " w-36"}
+              value={abwArt}
+              onChange={(e) => setAbwArt(e.target.value as AbwesenheitsArt)}
             >
-              <option value="urlaub">urlaub</option>
-              <option value="krank">krank</option>
-              <option value="feiertag">feiertag</option>
-              <option value="unbezahlt">unbezahlt</option>
+              <option value="urlaub">Urlaub</option>
+              <option value="krank">Krank</option>
+              <option value="feiertag">Feiertag</option>
+              <option value="unbezahlt">Unbezahlt</option>
             </select>
           </div>
 
@@ -138,20 +224,22 @@ export function EntryAndAbsenceForms(props: {
             <input
               className={ui.numberInput + " w-28"}
               type="number"
-              min={0}
               step="0.5"
-              value={p.abwStunden}
-              onChange={(e) => p.setAbwStunden(Number(e.target.value))}
+              min={0}
+              value={Number.isFinite(abwStunden) ? abwStunden : 0}
+              onChange={(e) => setAbwStunden(Number(e.target.value))}
             />
           </div>
 
-          <button className={ui.btnPrimary} type="button" onClick={p.addAbwesenheit}>
+          <button className={ui.btnPrimary} type="submit">
             Hinzufügen
           </button>
-        </div>
+        </form>
 
-        {p.abwError ? <div className="mt-2 text-sm text-red-300">{p.abwError}</div> : null}
-      </Section>
-    </TwoCol>
+        <div className={ui.hint}>
+          Aktuell geladen: {(abwesenheiten ?? []).filter((a) => a.mitarbeiterId === mitarbeiterId).length} Abwesenheiten
+        </div>
+      </div>
+    </div>
   );
 }

@@ -47,4 +47,9 @@ export const ui = {
   // Alerts
   alertError: "rounded-xl border border-red-700/60 bg-red-950/30 p-3 text-sm text-red-200",
   alertInfo: "rounded-xl border border-zinc-700 bg-zinc-950/30 p-3 text-sm text-zinc-200",
+    // Table cosmetics
+  trHover: "hover:bg-zinc-800/30",
+  trZebra: "odd:bg-zinc-900/20",
+  badge: "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium border",
+
 };
