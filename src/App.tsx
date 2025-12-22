@@ -525,9 +525,41 @@ export default function App() {
     return mitarbeiter.modell.tage[t]?.sollStunden ?? 0;
   }}
   tagesBuchungen={tagesBuchungen}
-  addTagesBuchung={addTagesBuchung}
-  deleteTagesBuchung={deleteTagesBuchung}
+  setDayArtHours={(isoDate, art, stunden) => {
+    const hours = Number.isFinite(stunden) ? stunden : 0;
+
+    setTagesBuchungen((prev) => {
+      // Entferne alle Einträge dieser Art an diesem Tag für diesen Mitarbeiter
+      const filtered = prev.filter(
+        (b) => !(eqId(b.mitarbeiterId, mitarbeiter.id) && b.datum === isoDate && b.art === art)
+      );
+
+      // 0 = löschen
+      if (hours <= 0) return filtered;
+
+      // setze “einen” Eintrag (Excel-Style)
+      const next: TagesBuchung[] = filtered.slice();
+      next.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        mitarbeiterId: mitarbeiter.id,
+        datum: isoDate,
+        art,
+        stunden: hours
+      });
+
+      next.sort((x, y) => {
+        const idCmp = x.mitarbeiterId.localeCompare(y.mitarbeiterId);
+        if (idCmp !== 0) return idCmp;
+        const dCmp = x.datum.localeCompare(y.datum);
+        if (dCmp !== 0) return dCmp;
+        return x.id.localeCompare(y.id);
+      });
+
+      return next;
+    });
+  }}
 />
+
 
 
       {/* Eingaben (Wochen + Abwesenheit; bleibt wie es ist) */}
