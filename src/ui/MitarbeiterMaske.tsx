@@ -24,20 +24,20 @@ type Props = {
 
   tagesBuchungen: TagesBuchung[];
 
-  // Excel-Edit
-  setDayArtHours: (isoDate: string, art: BuchungsArt, stunden: number) => void;
+  // CRUD Handler (aus App)
+  addWorkLine: (isoDate: string) => void;
+  updateBooking: (id: string, patch: Partial<Pick<TagesBuchung, "note" | "stunden">>) => void;
+  deleteBooking: (id: string) => void;
+
+  setAbsence: (isoDate: string, art: "urlaub" | "krank" | "unbezahlt" | "none", stundenOrNull: number | null) => void;
+  setUeAbbau: (isoDate: string, stunden: number) => void;
 };
 
 export function MitarbeiterMaske(p: Props) {
   const [week, setWeek] = useState<string>(defaultWeekToday());
 
-  // Optional: kleines “Konto aktuell” aus den parallel gespeicherten Tagen (nur Mitarbeiter)
-  // Das ist NICHT dein offizielles Wochen-Zeitkonto; es ist “Tagesbuchungen-Konto”.
-  // Später mergen wir das sauber zusammen.
+  // Konto aus Tagesbuchungen (nur Mitarbeiter) – als Richtwert
   const kontoAusTagen = useMemo(() => {
-    // Wir berechnen über alle Tage (Mo–Fr + Wochenenden ignoriert über getTagesSoll=0)
-    // Logik pro Tag:
-    // frei reduziert effektives Soll; Ü-Abbau reduziert Konto direkt.
     const mapByDate = new Map<string, Record<BuchungsArt, number>>();
     for (const b of p.tagesBuchungen) {
       if (b.mitarbeiterId !== p.mitarbeiterId) continue;
@@ -48,9 +48,9 @@ export function MitarbeiterMaske(p: Props) {
 
     let konto = 0;
     for (const [iso, v] of mapByDate.entries()) {
-      const tagesSoll = Number(p.getTagesSoll(iso)) || 0;
+      const soll = Number(p.getTagesSoll(iso)) || 0;
       const frei = v.urlaub + v.krank + v.unbezahlt;
-      const effSoll = Math.max(0, tagesSoll - frei);
+      const effSoll = Math.max(0, soll - frei);
       const ueHeute = v.arbeit - effSoll;
       konto += ueHeute - v.ueberstundenabbau;
     }
@@ -75,7 +75,7 @@ export function MitarbeiterMaske(p: Props) {
         </div>
 
         <div className={p.ui.hint + " mt-2"}>
-          Hinweis: Das ist das Konto aus den Tagesbuchungen (Mitarbeiter-Eingaben). Später führen wir das sauber mit dem Zeitkonto zusammen.
+          Ziel: Mitarbeiter tragen täglich Projekte/Tätigkeiten ein. Abwesenheit kann ohne Stunden (voller Tag) gesetzt werden.
         </div>
       </div>
 
@@ -86,7 +86,11 @@ export function MitarbeiterMaske(p: Props) {
         setWeek={setWeek}
         getTagesSoll={p.getTagesSoll}
         tagesBuchungen={p.tagesBuchungen}
-        setDayArtHours={p.setDayArtHours}
+        addWorkLine={p.addWorkLine}
+        updateBooking={p.updateBooking}
+        deleteBooking={p.deleteBooking}
+        setAbsence={p.setAbsence}
+        setUeAbbau={p.setUeAbbau}
       />
     </div>
   );

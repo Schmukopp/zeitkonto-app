@@ -30,6 +30,9 @@ function loadFromStorage<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+function makeId(): string {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function saveToStorage<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
@@ -525,40 +528,87 @@ export default function App() {
     return mitarbeiter.modell.tage[t]?.sollStunden ?? 0;
   }}
   tagesBuchungen={tagesBuchungen}
-  setDayArtHours={(isoDate, art, stunden) => {
-    const hours = Number.isFinite(stunden) ? stunden : 0;
-
+  addWorkLine={(isoDate) => {
     setTagesBuchungen((prev) => {
-      // Entferne alle Einträge dieser Art an diesem Tag für diesen Mitarbeiter
+      const next = prev.slice();
+      next.push({
+        id: makeId(),
+        mitarbeiterId: mitarbeiter.id,
+        datum: isoDate,
+        art: "arbeit",
+        stunden: 0,
+        note: ""
+      });
+      return next;
+    });
+  }}
+  updateBooking={(id, patch) => {
+    setTagesBuchungen((prev) =>
+      prev.map((b) => (b.id === id ? { ...b, ...patch, stunden: patch.stunden ?? b.stunden } : b))
+    );
+  }}
+  deleteBooking={(id) => {
+    setTagesBuchungen((prev) => prev.filter((b) => b.id !== id));
+  }}
+  setAbsence={(isoDate, art, stundenOrNull) => {
+    setTagesBuchungen((prev) => {
+      // entferne bestehende Abwesenheitseinträge für diesen Tag (urlaub/krank/unbezahlt)
       const filtered = prev.filter(
-        (b) => !(eqId(b.mitarbeiterId, mitarbeiter.id) && b.datum === isoDate && b.art === art)
+        (b) =>
+          !(
+            eqId(b.mitarbeiterId, mitarbeiter.id) &&
+            b.datum === isoDate &&
+            (b.art === "urlaub" || b.art === "krank" || b.art === "unbezahlt")
+          )
       );
 
-      // 0 = löschen
-      if (hours <= 0) return filtered;
+      if (art === "none") return filtered;
 
-      // setze “einen” Eintrag (Excel-Style)
-      const next: TagesBuchung[] = filtered.slice();
+      const soll = (() => {
+        const t = isoDateToWochenTag(isoDate);
+        if (!t) return 0;
+        return mitarbeiter.modell.tage[t]?.sollStunden ?? 0;
+      })();
+
+      const hours = stundenOrNull == null || stundenOrNull <= 0 ? soll : stundenOrNull;
+
+      const next = filtered.slice();
       next.push({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        id: makeId(),
         mitarbeiterId: mitarbeiter.id,
         datum: isoDate,
         art,
-        stunden: hours
+        stunden: hours,
+        note: ""
       });
+      return next;
+    });
+  }}
+  setUeAbbau={(isoDate, stunden) => {
+    const hours = Number.isFinite(stunden) ? stunden : 0;
 
-      next.sort((x, y) => {
-        const idCmp = x.mitarbeiterId.localeCompare(y.mitarbeiterId);
-        if (idCmp !== 0) return idCmp;
-        const dCmp = x.datum.localeCompare(y.datum);
-        if (dCmp !== 0) return dCmp;
-        return x.id.localeCompare(y.id);
+    setTagesBuchungen((prev) => {
+      // entferne bestehenden Ü-Abbau für Tag (wir halten es bewusst 1 Eintrag pro Tag)
+      const filtered = prev.filter(
+        (b) => !(eqId(b.mitarbeiterId, mitarbeiter.id) && b.datum === isoDate && b.art === "ueberstundenabbau")
+      );
+
+      if (hours <= 0) return filtered;
+
+      const next = filtered.slice();
+      next.push({
+        id: makeId(),
+        mitarbeiterId: mitarbeiter.id,
+        datum: isoDate,
+        art: "ueberstundenabbau",
+        stunden: hours,
+        note: ""
       });
-
       return next;
     });
   }}
 />
+
 
 
 

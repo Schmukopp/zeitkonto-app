@@ -3,7 +3,6 @@ import type { BuchungsArt, TagesBuchung } from "./MitarbeiterMaske";
 
 type Ui = Record<string, string>;
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
-
 const TAGE: WochenTag[] = ["mo", "di", "mi", "do", "fr"];
 
 function pad2(n: number) {
@@ -23,9 +22,8 @@ function parseIsoWeek(isoWeek: string): { year: number; week: number } | null {
   return { year, week };
 }
 
-// ISO week -> Montag (lokal) (nach ISO 8601)
+// ISO week -> Montag (lokal)
 function mondayOfIsoWeek(year: number, week: number): Date {
-  // 4. Jan ist immer in ISO-Woche 1
   const jan4 = new Date(year, 0, 4, 0, 0, 0, 0);
   const day = jan4.getDay(); // 0=So..6=Sa
   const isoDow = day === 0 ? 7 : day; // 1..7
@@ -37,11 +35,9 @@ function mondayOfIsoWeek(year: number, week: number): Date {
 }
 
 function isoWeekOfDate(date: Date): string {
-  // ISO week/year (lokal)
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  // Donnerstag bestimmt ISO-Jahr
-  const day = d.getDay(); // 0=So..6=Sa
-  const isoDow = day === 0 ? 7 : day; // 1..7
+  const day = d.getDay();
+  const isoDow = day === 0 ? 7 : day;
   d.setDate(d.getDate() + (4 - isoDow));
   const isoYear = d.getFullYear();
 
@@ -58,24 +54,15 @@ function isoWeekOfDate(date: Date): string {
   return `${isoYear}-W${pad2(week)}`;
 }
 
-function fmtTagLabel(tag: WochenTag) {
-  return tag.toUpperCase();
+export function defaultWeekToday(): string {
+  return isoWeekOfDate(new Date());
 }
 
-function fmtArtHeader(art: BuchungsArt) {
-  switch (art) {
-    case "arbeit":
-      return "Arbeit";
-    case "urlaub":
-      return "Urlaub";
-    case "krank":
-      return "Krank";
-    case "unbezahlt":
-      return "Unbezahlt";
-    case "ueberstundenabbau":
-      return "Ü-Abbau";
-  }
+function tagLabel(t: WochenTag) {
+  return t.toUpperCase();
 }
+
+type AbsenceArt = "urlaub" | "krank" | "unbezahlt";
 
 type Props = {
   ui: Ui;
@@ -89,17 +76,23 @@ type Props = {
 
   tagesBuchungen: TagesBuchung[];
 
-  // “Excel-Edit”: setze Stunden pro (Datum, Art) – ersetzt bestehende Einträge dieser Art/Tag
-  setDayArtHours: (isoDate: string, art: BuchungsArt, stunden: number) => void;
-};
+  // CRUD
+  addWorkLine: (isoDate: string) => void;
+  updateBooking: (id: string, patch: Partial<Pick<TagesBuchung, "note" | "stunden">>) => void;
+  deleteBooking: (id: string) => void;
 
-export function defaultWeekToday(): string {
-  return isoWeekOfDate(new Date());
-}
+  // Abwesenheit (voller Tag ohne Stunden möglich)
+  setAbsence: (isoDate: string, art: AbsenceArt | "none", stundenOrNull: number | null) => void;
+
+  // Überstundenabbau
+  setUeAbbau: (isoDate: string, stunden: number) => void;
+};
 
 export function Wochenblatt(p: Props) {
   const weekParsed = parseIsoWeek(p.week);
-  const monday = weekParsed ? mondayOfIsoWeek(weekParsed.year, weekParsed.week) : mondayOfIsoWeek(new Date().getFullYear(), 1);
+  const monday = weekParsed
+    ? mondayOfIsoWeek(weekParsed.year, weekParsed.week)
+    : mondayOfIsoWeek(new Date().getFullYear(), 1);
 
   const days = useMemo(() => {
     const out: Array<{ tag: WochenTag; date: Date; iso: string }> = [];
@@ -112,53 +105,77 @@ export function Wochenblatt(p: Props) {
   }, [monday.getTime()]);
 
   const byDay = useMemo(() => {
-    const map = new Map<string, Record<BuchungsArt, number>>();
-    for (const d of days) {
-      map.set(d.iso, { arbeit: 0, urlaub: 0, krank: 0, unbezahlt: 0, ueberstundenabbau: 0 });
-    }
+    const map = new Map<string, TagesBuchung[]>();
+    for (const d of days) map.set(d.iso, []);
     for (const b of p.tagesBuchungen) {
       if (b.mitarbeiterId !== p.mitarbeiterId) continue;
       if (!map.has(b.datum)) continue;
-      const row = map.get(b.datum)!;
-      row[b.art] += Number(b.stunden) || 0;
+      map.get(b.datum)!.push(b);
+    }
+    for (const [k, arr] of map.entries()) {
+      arr.sort((a, b) => a.id.localeCompare(b.id));
+      map.set(k, arr);
     }
     return map;
   }, [p.tagesBuchungen, p.mitarbeiterId, days]);
 
+  const calcDay = (isoDate: string, list: TagesBuchung[]) => {
+    const soll = Number(p.getTagesSoll(isoDate)) || 0;
+
+    const work = list.filter((x) => x.art === "arbeit");
+    const abs = list.filter((x) => x.art === "urlaub" || x.art === "krank" || x.art === "unbezahlt");
+    const abbau = list.filter((x) => x.art === "ueberstundenabbau");
+
+    const sumWork = work.reduce((a, x) => a + (Number(x.stunden) || 0), 0);
+    const sumAbs = abs.reduce((a, x) => a + (Number(x.stunden) || 0), 0);
+    const sumAbbau = abbau.reduce((a, x) => a + (Number(x.stunden) || 0), 0);
+
+    const effSoll = Math.max(0, soll - sumAbs);
+    const ueHeute = sumWork - effSoll;
+    const kontoAenderung = ueHeute - sumAbbau;
+
+    // Urlaubstage-Logik (für später):
+    // - voller Urlaubstag = urlaubStunden == soll
+    // - halber Tag: urlaubStunden / soll
+    const urlaubStunden = abs.filter((x) => x.art === "urlaub").reduce((a, x) => a + (Number(x.stunden) || 0), 0);
+    const urlaubTage = soll > 0 ? Math.min(1, urlaubStunden / soll) : 0;
+
+    // Welche Abwesenheit ist „gesetzt“? Wir nehmen die erste (pro Tag erlauben wir effektiv genau eine Art)
+    const absArt = abs[0]?.art ?? "none";
+    const absHours = abs[0]?.stunden ?? 0;
+
+    const abbauHours = abbau[0]?.stunden ?? 0;
+
+    return {
+      soll,
+      work,
+      sumWork,
+      absArt: absArt as AbsenceArt | "none",
+      absHours,
+      sumAbs,
+      abbauHours,
+      sumAbbau,
+      ueHeute,
+      kontoAenderung,
+      urlaubTage
+    };
+  };
+
   const rows = useMemo(() => {
     return days.map((d) => {
-      const v = byDay.get(d.iso) ?? { arbeit: 0, urlaub: 0, krank: 0, unbezahlt: 0, ueberstundenabbau: 0 };
-      const frei = v.urlaub + v.krank + v.unbezahlt;
-
-      const tagesSoll = Number(p.getTagesSoll(d.iso)) || 0;
-      const effSoll = Math.max(0, tagesSoll - frei);
-
-      const ueHeute = v.arbeit - effSoll;
-      const kontoAenderung = ueHeute - v.ueberstundenabbau;
-
-      return {
-        ...d,
-        v,
-        ueHeute,
-        kontoAenderung
-      };
+      const list = byDay.get(d.iso) ?? [];
+      return { ...d, list, m: calcDay(d.iso, list) };
     });
-  }, [days, byDay, p]);
+  }, [days, byDay]);
 
   const weekTotals = useMemo(() => {
-    const sum: Record<BuchungsArt, number> = { arbeit: 0, urlaub: 0, krank: 0, unbezahlt: 0, ueberstundenabbau: 0 };
-    let ueSum = 0;
-    let kontoSum = 0;
-    for (const r of rows) {
-      sum.arbeit += r.v.arbeit;
-      sum.urlaub += r.v.urlaub;
-      sum.krank += r.v.krank;
-      sum.unbezahlt += r.v.unbezahlt;
-      sum.ueberstundenabbau += r.v.ueberstundenabbau;
-      ueSum += r.ueHeute;
-      kontoSum += r.kontoAenderung;
-    }
-    return { sum, ueSum, kontoSum };
+    const sumWork = rows.reduce((a, r) => a + r.m.sumWork, 0);
+    const sumAbs = rows.reduce((a, r) => a + r.m.sumAbs, 0);
+    const sumAbbau = rows.reduce((a, r) => a + r.m.sumAbbau, 0);
+    const ueSum = rows.reduce((a, r) => a + r.m.ueHeute, 0);
+    const kontoSum = rows.reduce((a, r) => a + r.m.kontoAenderung, 0);
+    const urlaubTage = rows.reduce((a, r) => a + r.m.urlaubTage, 0);
+    return { sumWork, sumAbs, sumAbbau, ueSum, kontoSum, urlaubTage };
   }, [rows]);
 
   function navWeek(delta: number) {
@@ -169,25 +186,14 @@ export function Wochenblatt(p: Props) {
     p.setWeek(isoWeekOfDate(baseMon));
   }
 
-  function renderNumberCell(isoDate: string, art: BuchungsArt, value: number) {
-    return (
-      <input
-        className={`${p.ui.numberInput} w-20 text-right`}
-        type="number"
-        min={0}
-        step="0.25"
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) => p.setDayArtHours(isoDate, art, Number(e.target.value))}
-      />
-    );
-  }
+  const cellBox = "rounded-xl border border-zinc-800 p-2";
 
   return (
     <div className={`${p.ui.card} ${p.ui.cardBody}`}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="font-semibold">Wochenblatt</div>
-          <div className={p.ui.subtitle}>Schnelleingabe wie Stundenzettel (Mo–Fr)</div>
+          <div className={p.ui.subtitle}>Pro Tag mehrere Tätigkeiten/Projekte + automatische Ü-Stunden</div>
         </div>
 
         <div className="flex items-end gap-2">
@@ -210,12 +216,11 @@ export function Wochenblatt(p: Props) {
           <thead className="text-zinc-300">
             <tr>
               <th className="p-2 text-left">Tag</th>
-              <th className="p-2 text-left">Datum</th>
-              <th className="p-2 text-right">{fmtArtHeader("arbeit")}</th>
-              <th className="p-2 text-right">{fmtArtHeader("urlaub")}</th>
-              <th className="p-2 text-right">{fmtArtHeader("krank")}</th>
-              <th className="p-2 text-right">{fmtArtHeader("unbezahlt")}</th>
-              <th className="p-2 text-right">{fmtArtHeader("ueberstundenabbau")}</th>
+              <th className="p-2 text-left">Tätigkeiten / Notizen</th>
+              <th className="p-2 text-right">Stunden</th>
+              <th className="p-2 text-left">Abwesenheit</th>
+              <th className="p-2 text-right">Ü-Abbau</th>
+              <th className="p-2 text-right">Tag gesamt</th>
               <th className="p-2 text-right">Ü-Stunden</th>
               <th className="p-2 text-right">Konto ±</th>
             </tr>
@@ -223,25 +228,146 @@ export function Wochenblatt(p: Props) {
 
           <tbody>
             {rows.map((r) => (
-              <tr key={r.iso} className="border-t border-zinc-800">
-                <td className="p-2 font-medium">{fmtTagLabel(r.tag)}</td>
-                <td className="p-2 text-zinc-400 tabular-nums">{r.iso}</td>
-
-                <td className="p-2 text-right">{renderNumberCell(r.iso, "arbeit", r.v.arbeit)}</td>
-                <td className="p-2 text-right">{renderNumberCell(r.iso, "urlaub", r.v.urlaub)}</td>
-                <td className="p-2 text-right">{renderNumberCell(r.iso, "krank", r.v.krank)}</td>
-                <td className="p-2 text-right">{renderNumberCell(r.iso, "unbezahlt", r.v.unbezahlt)}</td>
-                <td className="p-2 text-right">{renderNumberCell(r.iso, "ueberstundenabbau", r.v.ueberstundenabbau)}</td>
-
-                <td className={"p-2 text-right tabular-nums " + (r.ueHeute < 0 ? "text-red-300" : "text-emerald-300")}>
-                  {r.ueHeute}
+              <tr key={r.iso} className="border-t border-zinc-800 align-top">
+                <td className="p-2">
+                  <div className="font-medium">{tagLabel(r.tag)}</div>
+                  <div className="text-zinc-400 tabular-nums">{r.iso}</div>
                 </td>
-                <td
-                  className={
-                    "p-2 text-right tabular-nums " + (r.kontoAenderung < 0 ? "text-red-300" : "text-emerald-300")
-                  }
-                >
-                  {r.kontoAenderung}
+
+                {/* Tätigkeiten / Notizen */}
+                <td className="p-2">
+                  <div className={cellBox}>
+                    {r.m.work.length === 0 ? (
+                      <div className="text-zinc-500 text-xs">Keine Arbeitseinträge</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {r.m.work.map((w) => (
+                          <div key={w.id} className="flex items-center gap-2">
+                            <input
+                              className={p.ui.input + " w-full"}
+                              value={w.note ?? ""}
+                              onChange={(e) => p.updateBooking(w.id, { note: e.target.value })}
+                              placeholder="z.B. Küche Montage, Projekt Müller, Lackieren…"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <button type="button" className={p.ui.btnSecondary} onClick={() => p.addWorkLine(r.iso)}>
+                        + Tätigkeit
+                      </button>
+                      <div className="text-xs text-zinc-500">Mehrere Projekte am Tag möglich.</div>
+                    </div>
+                  </div>
+                </td>
+
+                {/* Stunden (zu den Tätigkeiten) */}
+                <td className="p-2 text-right">
+                  <div className={cellBox}>
+                    {r.m.work.length === 0 ? (
+                      <div className="text-zinc-500 text-xs text-right">—</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {r.m.work.map((w) => (
+                          <div key={w.id} className="flex items-center justify-end gap-2">
+                            <input
+                              className={`${p.ui.numberInput} w-24 text-right`}
+                              type="number"
+                              min={0}
+                              step="0.25"
+                              value={Number.isFinite(w.stunden) ? w.stunden : 0}
+                              onChange={(e) => p.updateBooking(w.id, { stunden: Number(e.target.value) })}
+                            />
+                            <button type="button" className={p.ui.btnDanger} onClick={() => p.deleteBooking(w.id)} title="Eintrag löschen">
+                              Löschen
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-2 text-xs text-zinc-500 text-right">
+                      Tagessumme Arbeit: <span className="tabular-nums font-medium">{r.m.sumWork}</span> h
+                    </div>
+                  </div>
+                </td>
+
+                {/* Abwesenheit */}
+                <td className="p-2">
+                  <div className={cellBox}>
+                    <div className="flex items-center gap-2">
+                      <select
+                        className={p.ui.select}
+                        value={r.m.absArt}
+                        onChange={(e) => p.setAbsence(r.iso, e.target.value as any, null)}
+                      >
+                        <option value="none">—</option>
+                        <option value="urlaub">Urlaub</option>
+                        <option value="krank">Krank</option>
+                        <option value="unbezahlt">Unbezahlt</option>
+                      </select>
+
+                      {/* Stunden optional: leer = voller Tag (automatisch) */}
+                      <input
+                        className={`${p.ui.numberInput} w-24 text-right`}
+                        type="number"
+                        min={0}
+                        step="0.25"
+                        value={r.m.absArt === "none" ? 0 : Number(r.m.absHours) || 0}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (r.m.absArt === "none") return;
+                          // hier ist "0" erlaubt, wird im Setter als "voller Tag" interpretiert
+                          p.setAbsence(r.iso, r.m.absArt as any, Number.isFinite(v) ? v : 0);
+                        }}
+                      />
+                    </div>
+
+                    <div className="mt-1 text-xs text-zinc-500">
+                      Tipp: Stunden = 0 bedeutet „voller Tag“ (automatisch). Teil-Urlaub z.B. 5h bei SOLL 10h.
+                    </div>
+                  </div>
+                </td>
+
+                {/* Ü-Abbau */}
+                <td className="p-2 text-right">
+                  <div className={cellBox}>
+                    <input
+                      className={`${p.ui.numberInput} w-24 text-right`}
+                      type="number"
+                      min={0}
+                      step="0.25"
+                      value={Number.isFinite(r.m.abbauHours) ? r.m.abbauHours : 0}
+                      onChange={(e) => p.setUeAbbau(r.iso, Number(e.target.value))}
+                    />
+                    <div className="mt-1 text-xs text-zinc-500 text-right">Vom Konto abziehen</div>
+                  </div>
+                </td>
+
+                {/* Tag gesamt */}
+                <td className="p-2 text-right tabular-nums">
+                  <div className={cellBox}>
+                    <div className="font-medium">{r.m.sumWork + r.m.sumAbs + r.m.sumAbbau}</div>
+                    <div className="text-xs text-zinc-500">inkl. Frei/Abbau</div>
+                  </div>
+                </td>
+
+                {/* Ü-Stunden */}
+                <td className={"p-2 text-right tabular-nums " + (r.m.ueHeute < 0 ? "text-red-300" : "text-emerald-300")}>
+                  <div className={cellBox}>
+                    <div className="font-medium">{r.m.ueHeute}</div>
+                    <div className="text-xs text-zinc-500">heute</div>
+                  </div>
+                </td>
+
+                {/* Konto ± */}
+                <td className={"p-2 text-right tabular-nums " + (r.m.kontoAenderung < 0 ? "text-red-300" : "text-emerald-300")}>
+                  <div className={cellBox}>
+                    <div className="font-medium">{r.m.kontoAenderung}</div>
+                    <div className="text-xs text-zinc-500">heute</div>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -252,20 +378,16 @@ export function Wochenblatt(p: Props) {
               <td className="p-2 font-semibold" colSpan={2}>
                 Woche gesamt
               </td>
-              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sum.arbeit}</td>
-              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sum.urlaub}</td>
-              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sum.krank}</td>
-              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sum.unbezahlt}</td>
-              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sum.ueberstundenabbau}</td>
+              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sumWork}</td>
+              <td className="p-2 text-left text-zinc-400">
+                Urlaub: <span className="tabular-nums font-semibold">{weekTotals.urlaubTage.toFixed(2)}</span> Tage
+              </td>
+              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sumAbbau}</td>
+              <td className="p-2 text-right tabular-nums font-semibold">{weekTotals.sumWork + weekTotals.sumAbs + weekTotals.sumAbbau}</td>
               <td className={"p-2 text-right tabular-nums font-semibold " + (weekTotals.ueSum < 0 ? "text-red-300" : "text-emerald-300")}>
                 {weekTotals.ueSum}
               </td>
-              <td
-                className={
-                  "p-2 text-right tabular-nums font-semibold " +
-                  (weekTotals.kontoSum < 0 ? "text-red-300" : "text-emerald-300")
-                }
-              >
+              <td className={"p-2 text-right tabular-nums font-semibold " + (weekTotals.kontoSum < 0 ? "text-red-300" : "text-emerald-300")}>
                 {weekTotals.kontoSum}
               </td>
             </tr>
@@ -274,7 +396,7 @@ export function Wochenblatt(p: Props) {
       </div>
 
       <div className={p.ui.hint + " mt-3"}>
-        Bedienung: Werte pro Tag direkt überschreiben. 0 setzt den jeweiligen Eintrag zurück.
+        Abwesenheit: Wenn Stunden=0 → voller Tag (automatisch nach SOLL). Teil-Urlaub: Stunden eintragen (z.B. 5 bei SOLL 10).
       </div>
     </div>
   );
