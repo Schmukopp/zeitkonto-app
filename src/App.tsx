@@ -576,30 +576,41 @@ export default function App() {
     <div className={ui.tableWrap}>
       <table className={ui.table}>
         <thead className={ui.thead}>
-          <tr>
+        <tr className="text-zinc-300">
+
             <th className={ui.th}>Woche</th>
-            <th className={ui.th}>IST</th>
-            <th className={ui.th}>SOLL</th>
-            <th className={ui.th}>Abw</th>
-            <th className={ui.th}>eSOLL</th>
-            <th className={ui.th}>Δ</th>
-            <th className={ui.th}>Saldo</th>
-            <th className={ui.th}>Urlaub</th>
+<th className={ui.th + " text-right"}>IST</th>
+<th className={ui.th + " text-right"}>SOLL</th>
+<th className={ui.th + " text-right"}>Abw</th>
+<th className={ui.th + " text-right"}>eSOLL</th>
+<th className={ui.th + " text-right"}>Δ</th>
+<th className={ui.th + " text-right"}>Saldo</th>
+<th className={ui.th + " text-right"}>Urlaub</th>
+
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
             <tr key={r.woche} className={`${ui.tr} ${ui.trZebra} ${ui.trHover}`}>
               <td className={ui.tdStrong}>{r.woche}</td>
-              <td className={ui.td}>{r.istStunden}</td>
-              <td className={ui.td}>{r.sollStunden}</td>
-              <td className={ui.td}>{r.abwesenheitStunden}</td>
-              <td className={ui.td}>{r.effektivesSoll}</td>
-              <td className={ui.td + " " + (r.delta < 0 ? "text-red-400" : "text-emerald-400")}>
-                {r.delta}
-              </td>
-              <td className={ui.td}>{r.saldo}</td>
-              <td className={ui.td}>{r.urlaubstage.toFixed(2)}</td>
+<td className={ui.td + " text-right tabular-nums"}>{r.istStunden}</td>
+<td className={ui.td + " text-right tabular-nums"}>{r.sollStunden}</td>
+<td className={ui.td + " text-right tabular-nums"}>{r.abwesenheitStunden}</td>
+<td className={ui.td + " text-right tabular-nums"}>{r.effektivesSoll}</td>
+
+<td
+  className={
+    ui.td +
+    " text-right tabular-nums " +
+    (r.delta < 0 ? "text-red-300" : "text-emerald-300")
+  }
+>
+  {r.delta}
+</td>
+
+<td className={ui.td + " text-right tabular-nums"}>{r.saldo}</td>
+<td className={ui.td + " text-right tabular-nums"}>{r.urlaubstage.toFixed(2)}</td>
+
             </tr>
           ))}
 
@@ -620,25 +631,25 @@ export default function App() {
         <div className="font-semibold">Zusammenfassung</div>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>IST gesamt</div>
-          <div className="text-right">{s.sumIst}</div>
+          <div className="text-right tabular-nums">{s.sumIst}</div>
 
           <div>SOLL gesamt</div>
-          <div className="text-right">{s.sumSoll}</div>
+          <div className="text-right tabular-nums">{s.sumSoll}</div>
 
           <div>eSOLL gesamt</div>
-          <div className="text-right">{s.sumEffSoll}</div>
+          <div className="text-right tabular-nums">{s.sumEffSoll}</div>
 
           <div>Abwesenheit</div>
-          <div className="text-right">{s.sumAbw}</div>
-
+          <div className="text-right tabular-num">{s.sumAbw}</div>
+          
           <div>Δ gesamt</div>
-          <div className="text-right">{s.sumDelta}</div>
+          <div className="text-right tabular-num">{s.sumDelta}</div>
 
           <div>Urlaub (Tage)</div>
-          <div className="text-right">{s.sumUrlaubTage.toFixed(2)}</div>
+          <div className="text-right tabular-num">{s.sumUrlaubTage.toFixed(2)}</div>
 
           <div className="font-semibold">End-Saldo</div>
-          <div className="text-right font-semibold">{s.endSaldo}</div>
+          <div className="text-right tabular-num font-semibold">{s.endSaldo}</div>
         </div>
       </div>
     ) : (
