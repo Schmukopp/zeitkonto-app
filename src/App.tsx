@@ -3,6 +3,8 @@ import Heute from "./ui/Heute";
 import Woche from "./ui/Woche";
 import { loadState } from "./core/timeStore";
 import type { State } from "./core/timeStore";
+import { DEFAULT_WOCHENMODELL, sollMinutenForIsoDate } from "./core/workModel";
+
 
 // Minimal: später kommt das aus deinem Mitarbeiter-Modell
 const MITARBEITER_ID = "m1";
@@ -18,13 +20,9 @@ function todayIso() {
 
 // Minimal: später kommt das aus Arbeitszeitmodell (Mo-Fr)
 function getTagesSollMinuten(isoDate: string) {
-  // Default: Mo-Do 8h, Fr 6h
-  const d = new Date(isoDate + "T00:00:00");
-  const js = d.getDay(); // 1=Mo ... 5=Fr
-  if (js === 5) return 6 * 60;
-  if (js >= 1 && js <= 4) return 8 * 60;
-  return 0;
+  return sollMinutenForIsoDate(DEFAULT_WOCHENMODELL, isoDate);
 }
+
 
 export default function App() {
   const [state, setStateRaw] = useState<State>(() => loadState());

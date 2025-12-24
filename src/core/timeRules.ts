@@ -19,31 +19,31 @@ export function getStatus(b: Buchung[], datum: string, mitarbeiterId: string): S
 }
 
 /**
- * Regel: Überstundenabbau darf nur bis SOLL-Rest gehen:
- * maxAbbau = max(0, soll - arbeit)
+ * NEUE Regel (wie von dir gefordert):
+ * - Status ist nur für Abwesenheit (urlaub/krank) und Überstundenabbau relevant.
+ * - Kein "Rest auffüllen" mehr.
+ * - Default (minuten === null) = ganzer Tag (sollMinuten).
+ * - ueberstundenabbau ist NICHT auf (soll - arbeit) begrenzt, sondern max = sollMinuten.
  */
 export function calcStatusMinuten(
   sollMinuten: number,
-  arbeitMinuten: number,
+  _arbeitMinuten: number,
   status: StatusBuchung | null
 ) {
-  const rest = Math.max(0, sollMinuten - arbeitMinuten);
-  const maxAbbau = rest;
+  const maxProTag = Math.max(0, sollMinuten);
 
   if (!status) {
-    return { statusMinuten: 0, maxAbbauMinuten: maxAbbau, appliedStatusMinuten: 0 };
+    return { statusMinuten: 0, maxAbbauMinuten: maxProTag, appliedStatusMinuten: 0 };
   }
 
-  const desired = status.minuten == null ? rest : Math.max(0, Number(status.minuten) || 0);
+  const desired =
+    status.minuten == null ? maxProTag : clamp(Math.max(0, Number(status.minuten) || 0), 0, maxProTag);
 
-  if (status.art === "ueberstundenabbau") {
-    const applied = clamp(desired, 0, maxAbbau);
-    return { statusMinuten: applied, maxAbbauMinuten: maxAbbau, appliedStatusMinuten: applied };
-  }
+  // Für alle Statusarten gilt: max pro Tag = sollMinuten
+  // (Kein Rest-Limit mehr!)
+  const applied = clamp(desired, 0, maxProTag);
 
-  // Urlaub / Krank: Standard = bis Rest auffüllen (nicht über SOLL hinaus)
-  const applied = clamp(desired, 0, rest);
-  return { statusMinuten: applied, maxAbbauMinuten: maxAbbau, appliedStatusMinuten: applied };
+  return { statusMinuten: applied, maxAbbauMinuten: maxProTag, appliedStatusMinuten: applied };
 }
 
 export function calcDaySummary(args: {
@@ -63,7 +63,19 @@ export function calcDaySummary(args: {
     status
   );
 
-  const deltaUeberstundenMinuten = arbeitMinuten - sollMinuten;
+  /**
+   * ÜBERSTUNDEN-KONTO (korrekt):
+   * - kein Status: arbeit - soll
+   * - urlaub/krank: arbeit - 0  (Tag ist "abgedeckt")
+   * - ueberstundenabbau: arbeit - abbauMinuten
+   */
+  let deltaUeberstundenMinuten = arbeitMinuten - sollMinuten;
+
+  if (status?.art === "urlaub" || status?.art === "krank") {
+    deltaUeberstundenMinuten = arbeitMinuten; // effektivSoll = 0
+  } else if (status?.art === "ueberstundenabbau") {
+    deltaUeberstundenMinuten = arbeitMinuten - appliedStatusMinuten;
+  }
 
   return {
     datum,

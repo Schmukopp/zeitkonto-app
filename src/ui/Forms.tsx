@@ -1,6 +1,11 @@
 // src/ui/Forms.tsx
 import React from "react";
-import type { Mitarbeiter } from "@core/models/types";
+import type { WochenTag } from "../core/workModel";
+
+// TODO: Integrieren, sobald das Mitarbeiter-Modell in dieser App vorhanden ist.
+// Aktuell wird Forms.tsx nicht verwendet; dieser Typ ist nur für TS-Kompilierung.
+type Mitarbeiter = { id: string; name: string };
+
 
 type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
 type AbwesenheitsArt = "urlaub" | "krank" | "feiertag" | "unbezahlt";

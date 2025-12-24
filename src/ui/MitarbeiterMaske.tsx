@@ -1,5 +1,7 @@
 // zeitkonto-app/src/ui/MitarbeiterMaske.tsx
 import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { WOCHENTAGE } from "../core/workModel";
 
 export type TagesBuchungArt = "arbeit" | "urlaub" | "krank" | "unbezahlt" | "ueberstundenabbau";
 

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
+import type { WochenTag } from "../core/workModel";
+import { WOCHENTAGE } from "../core/workModel";
 
-type WochenTag = "mo" | "di" | "mi" | "do" | "fr";
+const tage: WochenTag[] = WOCHENTAGE;
+
 type AbwesenheitsArt = "urlaub" | "krank" | "unbezahlt" | null;
 
 export type Projekt = {

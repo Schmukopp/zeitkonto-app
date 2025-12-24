@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { Bereich } from "../core/timeTypes";
+import type { ArbeitsBuchung, Bereich } from "../core/timeTypes";
 import { minutesToHoursString, calcDaySummary } from "../core/timeRules";
 import type { State } from "../core/timeStore";
 import { startTimer, stopTimer, upsertStatus, clearStatus, updateArbeitsBuchung, deleteBuchung } from "../core/timeStore";
@@ -67,9 +67,11 @@ export default function Heute(props: Props) {
 
   const laufend = state.running?.mitarbeiterId === mitarbeiterId ? state.running : null;
 
-  const arbeitsBuchungenHeute = state.buchungen
-    .filter((b) => b.mitarbeiterId === mitarbeiterId && b.datum === isoDate && b.art === "arbeit")
-    .map((b) => b);
+ const arbeitsBuchungenHeute = state.buchungen.filter(
+  (b): b is ArbeitsBuchung =>
+    b.mitarbeiterId === mitarbeiterId && b.datum === isoDate && b.art === "arbeit"
+);
+
 
   return (
     <div className={CD.page}>
