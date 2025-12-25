@@ -93,34 +93,65 @@ export default function AdminMitarbeiter(p: Props) {
                 </div>
 
                 <div>
-                  <div className="text-xs text-neutral-400 mb-1">Urlaubstage gesamt</div>
-                  <input
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                    type="number"
-                    value={sel.urlaubstageGesamt}
-                    onChange={(e) => p.setMs((s) => upsertMitarbeiter(s, { ...sel, urlaubstageGesamt: Number(e.target.value) || 0 }))}
-                  />
-                </div>
+  <div className="text-xs text-neutral-400 mb-1">Urlaubstage gesamt</div>
+  <input
+    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+    type="number"
+    min={0}
+    max={999}
+    value={sel.urlaubstageGesamt}
+    onChange={(e) =>
+      p.setMs((s) =>
+        upsertMitarbeiter(s, {
+          ...sel,
+          urlaubstageGesamt: Number(e.target.value) || 0,
+        })
+      )
+    }
+  />
+</div>
+
 
                 <div>
-                  <div className="text-xs text-neutral-400 mb-1">Urlaubstage verbraucht</div>
-                  <input
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                    type="number"
-                    value={sel.urlaubstageVerbraucht}
-                    onChange={(e) => p.setMs((s) => upsertMitarbeiter(s, { ...sel, urlaubstageVerbraucht: Number(e.target.value) || 0 }))}
-                  />
-                  <div className="mt-1 text-xs text-orange-300">Übrig: {calcUrlaubUebrig(sel)}</div>
-                </div>
+  <div className="text-xs text-neutral-400 mb-1">Urlaubstage verbraucht</div>
+  <input
+    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+    type="number"
+    min={0}
+    max={999}
+    value={sel.urlaubstageVerbraucht}
+    onChange={(e) =>
+      p.setMs((s) =>
+        upsertMitarbeiter(s, {
+          ...sel,
+          urlaubstageVerbraucht: Number(e.target.value) || 0,
+        })
+      )
+    }
+  />
+  <div className="mt-1 text-xs text-orange-300">Übrig: {calcUrlaubUebrig(sel)}</div>
+</div>
+
 
                 <div>
                   <div className="text-xs text-neutral-400 mb-1">Überstundenkonto (h)</div>
                   <input
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                    type="number"
-                    value={sel.ueberstundenSaldo}
-                    onChange={(e) => p.setMs((s) => upsertMitarbeiter(s, { ...sel, ueberstundenSaldo: Number(e.target.value) || 0 }))}
-                  />
+  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+  type="number"
+  min={-9999}
+  max={9999}
+  step="0.25"
+  value={sel.ueberstundenSaldo}
+  onChange={(e) =>
+    p.setMs((s) =>
+      upsertMitarbeiter(s, {
+        ...sel,
+        ueberstundenSaldo: Number(e.target.value) || 0,
+      })
+    )
+  }
+/>
+
                 </div>
               </div>
 
@@ -133,36 +164,52 @@ export default function AdminMitarbeiter(p: Props) {
 
                       <div className="mt-2 text-xs text-neutral-400">SOLL (Minuten)</div>
                       <input
-                        className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                        type="number"
-                        value={sel.modell.tage[t].sollMinuten}
-                        onChange={(e) => {
-                          const v = Number(e.target.value) || 0;
-                          p.setMs((s) =>
-                            upsertMitarbeiter(s, {
-                              ...sel,
-                              modell: { tage: { ...sel.modell.tage, [t]: { ...sel.modell.tage[t], sollMinuten: v } } },
-                            })
-                          );
-                        }}
-                      />
+  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+  type="number"
+  min={0}
+  max={12 * 60}
+  value={sel.modell.tage[t].sollMinuten}
+  onChange={(e) => {
+    const v = Number(e.target.value) || 0;
+    p.setMs((s) =>
+      upsertMitarbeiter(s, {
+        ...sel,
+        modell: {
+          tage: {
+            ...sel.modell.tage,
+            [t]: { ...sel.modell.tage[t], sollMinuten: v },
+          },
+        },
+      })
+    );
+  }}
+/>
+
 
                       <div className="mt-2 text-xs text-neutral-400">Urlaubswert (0..1)</div>
                       <input
-                        className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                        type="number"
-                        step="0.1"
-                        value={sel.modell.tage[t].urlaubswert}
-                        onChange={(e) => {
-                          const v = Number(e.target.value) || 0;
-                          p.setMs((s) =>
-                            upsertMitarbeiter(s, {
-                              ...sel,
-                              modell: { tage: { ...sel.modell.tage, [t]: { ...sel.modell.tage[t], urlaubswert: v } } },
-                            })
-                          );
-                        }}
-                      />
+  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+  type="number"
+  min={0}
+  max={1}
+  step="0.1"
+  value={sel.modell.tage[t].urlaubswert}
+  onChange={(e) => {
+    const v = Number(e.target.value) || 0;
+    p.setMs((s) =>
+      upsertMitarbeiter(s, {
+        ...sel,
+        modell: {
+          tage: {
+            ...sel.modell.tage,
+            [t]: { ...sel.modell.tage[t], urlaubswert: v },
+          },
+        },
+      })
+    );
+  }}
+/>
+
                     </div>
                   ))}
                 </div>

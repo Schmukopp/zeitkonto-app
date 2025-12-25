@@ -36,10 +36,20 @@ export default function App() {
     setMsRaw((prev) => updater(structuredClone(prev)));
   };
 
-  // Mitarbeiter-Stammdaten persistieren
-  useEffect(() => {
-    saveMitarbeiterState(ms);
-  }, [ms]);
+  // Mitarbeiter-Stammdaten persistieren (robust + leicht gedrosselt)
+useEffect(() => {
+  const t = window.setTimeout(() => {
+    try {
+      saveMitarbeiterState(ms);
+    } catch (err) {
+      // Absichtlich nur loggen: Admin darf dadurch nicht crashen.
+      console.warn("saveMitarbeiterState failed", err);
+    }
+  }, 300);
+
+  return () => window.clearTimeout(t);
+}, [ms]);
+
 
   const selected = useMemo(() => getSelected(ms), [ms]);
   const mitarbeiterId = selected?.id ?? "m1";
