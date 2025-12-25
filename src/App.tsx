@@ -37,19 +37,17 @@ export default function App() {
   };
 
   // Mitarbeiter-Stammdaten persistieren (robust + leicht gedrosselt)
-useEffect(() => {
-  const t = window.setTimeout(() => {
-    try {
-      saveMitarbeiterState(ms);
-    } catch (err) {
-      // Absichtlich nur loggen: Admin darf dadurch nicht crashen.
-      console.warn("saveMitarbeiterState failed", err);
-    }
-  }, 300);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      try {
+        saveMitarbeiterState(ms);
+      } catch (err) {
+        console.warn("saveMitarbeiterState failed", err);
+      }
+    }, 300);
 
-  return () => window.clearTimeout(t);
-}, [ms]);
-
+    return () => window.clearTimeout(t);
+  }, [ms]);
 
   const selected = useMemo(() => getSelected(ms), [ms]);
   const mitarbeiterId = selected?.id ?? "m1";
@@ -67,7 +65,6 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
-      {/* Navigation fixiert (damit nichts sie überdeckt) */}
       <div className="fixed left-0 right-0 top-0 z-50 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -90,7 +87,6 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* Inhalt bekommt Platz unter der Nav */}
       <div className="mx-auto max-w-6xl px-4 pt-20 pb-6">
         {tab === "admin" ? (
           <AdminMitarbeiter ms={ms} setMs={setMs} />
