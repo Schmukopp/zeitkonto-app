@@ -17,6 +17,22 @@ type Props = {
 
 const L: Record<WochenTag, string> = { mo: "Mo", di: "Di", mi: "Mi", do: "Do", fr: "Fr" };
 
+// Robust: beim ersten Klick verhindern wir, dass der Browser den Cursor setzt,
+// und markieren stattdessen den kompletten Inhalt. Ergebnis: "0" wird zu "5" statt "05".
+function selectAllOnFirstClick(e: React.MouseEvent<HTMLInputElement>) {
+  const el = e.currentTarget;
+  if (document.activeElement !== el) {
+    e.preventDefault();
+    el.focus();
+    el.select();
+  }
+}
+
+// Tastatur-Fokus (Tab) ebenfalls markieren
+function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.currentTarget.select();
+}
+
 export default function AdminMitarbeiter(p: Props) {
   const sel = getSelected(p.ms);
 
@@ -47,7 +63,7 @@ export default function AdminMitarbeiter(p: Props) {
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
-          <div className="text-xs text-neutral-400 mb-2">Mitarbeiter</div>
+          <div className="mb-2 text-xs text-neutral-400">Mitarbeiter</div>
           <div className="flex flex-col gap-2">
             {p.ms.mitarbeiter.map((m) => (
               <button
@@ -67,14 +83,14 @@ export default function AdminMitarbeiter(p: Props) {
           </div>
         </div>
 
-        <div className="md:col-span-2 rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3 md:col-span-2">
           {!sel ? (
             <div className="text-sm text-neutral-400">Kein Mitarbeiter ausgewählt.</div>
           ) : (
             <>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
-                  <div className="text-xs text-neutral-400 mb-1">Name</div>
+                  <div className="mb-1 text-xs text-neutral-400">Name</div>
                   <input
                     className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
                     value={sel.name}
@@ -83,7 +99,7 @@ export default function AdminMitarbeiter(p: Props) {
                 </div>
 
                 <div>
-                  <div className="text-xs text-neutral-400 mb-1">Geburtsdatum</div>
+                  <div className="mb-1 text-xs text-neutral-400">Geburtsdatum</div>
                   <input
                     className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
                     value={sel.geburtsdatum}
@@ -93,65 +109,59 @@ export default function AdminMitarbeiter(p: Props) {
                 </div>
 
                 <div>
-  <div className="text-xs text-neutral-400 mb-1">Urlaubstage gesamt</div>
-  <input
-    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-    type="number"
-    min={0}
-    max={999}
-    value={sel.urlaubstageGesamt}
-    onChange={(e) =>
-      p.setMs((s) =>
-        upsertMitarbeiter(s, {
-          ...sel,
-          urlaubstageGesamt: Number(e.target.value) || 0,
-        })
-      )
-    }
-  />
-</div>
-
-
-                <div>
-  <div className="text-xs text-neutral-400 mb-1">Urlaubstage verbraucht</div>
-  <input
-    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-    type="number"
-    min={0}
-    max={999}
-    value={sel.urlaubstageVerbraucht}
-    onChange={(e) =>
-      p.setMs((s) =>
-        upsertMitarbeiter(s, {
-          ...sel,
-          urlaubstageVerbraucht: Number(e.target.value) || 0,
-        })
-      )
-    }
-  />
-  <div className="mt-1 text-xs text-orange-300">Übrig: {calcUrlaubUebrig(sel)}</div>
-</div>
-
-
-                <div>
-                  <div className="text-xs text-neutral-400 mb-1">Überstundenkonto (h)</div>
+                  <div className="mb-1 text-xs text-neutral-400">Urlaubstage gesamt</div>
                   <input
-  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-  type="number"
-  min={-9999}
-  max={9999}
-  step="0.25"
-  value={sel.ueberstundenSaldo}
-  onChange={(e) =>
-    p.setMs((s) =>
-      upsertMitarbeiter(s, {
-        ...sel,
-        ueberstundenSaldo: Number(e.target.value) || 0,
-      })
-    )
-  }
-/>
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                    type="number"
+                    min={0}
+                    max={999}
+                    value={sel.urlaubstageGesamt}
+                    onMouseDown={selectAllOnFirstClick}
+                    onFocus={selectAllOnFocus}
+                    onChange={(e) =>
+                      p.setMs((s) =>
+                        upsertMitarbeiter(s, { ...sel, urlaubstageGesamt: Number(e.target.value) || 0 })
+                      )
+                    }
+                  />
+                </div>
 
+                <div>
+                  <div className="mb-1 text-xs text-neutral-400">Urlaubstage verbraucht</div>
+                  <input
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                    type="number"
+                    min={0}
+                    max={999}
+                    value={sel.urlaubstageVerbraucht}
+                    onMouseDown={selectAllOnFirstClick}
+                    onFocus={selectAllOnFocus}
+                    onChange={(e) =>
+                      p.setMs((s) =>
+                        upsertMitarbeiter(s, { ...sel, urlaubstageVerbraucht: Number(e.target.value) || 0 })
+                      )
+                    }
+                  />
+                  <div className="mt-1 text-xs text-orange-300">Übrig: {calcUrlaubUebrig(sel)}</div>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs text-neutral-400">Überstundenkonto (h)</div>
+                  <input
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                    type="number"
+                    min={-9999}
+                    max={9999}
+                    step="0.25"
+                    value={sel.ueberstundenSaldo}
+                    onMouseDown={selectAllOnFirstClick}
+                    onFocus={selectAllOnFocus}
+                    onChange={(e) =>
+                      p.setMs((s) =>
+                        upsertMitarbeiter(s, { ...sel, ueberstundenSaldo: Number(e.target.value) || 0 })
+                      )
+                    }
+                  />
                 </div>
               </div>
 
@@ -162,54 +172,58 @@ export default function AdminMitarbeiter(p: Props) {
                     <div key={t} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
                       <div className="text-sm font-medium">{L[t]}</div>
 
-                      <div className="mt-2 text-xs text-neutral-400">SOLL (Minuten)</div>
+                      <div className="mt-2 text-xs text-neutral-400">SOLL (Stunden)</div>
                       <input
   className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
   type="number"
   min={0}
-  max={12 * 60}
-  value={sel.modell.tage[t].sollMinuten}
+  max={12}
+  step="0.25"
+  value={Number((sel.modell.tage[t].sollMinuten / 60).toFixed(2))}
+  onMouseDown={selectAllOnFirstClick}
+  onFocus={selectAllOnFocus}
   onChange={(e) => {
-    const v = Number(e.target.value) || 0;
+    const hours = Number(e.target.value) || 0;
+    const minutes = Math.round(hours * 60);
+
     p.setMs((s) =>
       upsertMitarbeiter(s, {
         ...sel,
         modell: {
           tage: {
             ...sel.modell.tage,
-            [t]: { ...sel.modell.tage[t], sollMinuten: v },
+            [t]: { ...sel.modell.tage[t], sollMinuten: minutes },
           },
         },
       })
     );
   }}
 />
+<div className="mt-1 text-xs text-neutral-500">
+  = {sel.modell.tage[t].sollMinuten} min
+</div>
 
 
                       <div className="mt-2 text-xs text-neutral-400">Urlaubswert (0..1)</div>
                       <input
-  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-  type="number"
-  min={0}
-  max={1}
-  step="0.1"
-  value={sel.modell.tage[t].urlaubswert}
-  onChange={(e) => {
-    const v = Number(e.target.value) || 0;
-    p.setMs((s) =>
-      upsertMitarbeiter(s, {
-        ...sel,
-        modell: {
-          tage: {
-            ...sel.modell.tage,
-            [t]: { ...sel.modell.tage[t], urlaubswert: v },
-          },
-        },
-      })
-    );
-  }}
-/>
-
+                        className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step="0.1"
+                        value={sel.modell.tage[t].urlaubswert}
+                        onMouseDown={selectAllOnFirstClick}
+                        onFocus={selectAllOnFocus}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          p.setMs((s) =>
+                            upsertMitarbeiter(s, {
+                              ...sel,
+                              modell: { tage: { ...sel.modell.tage, [t]: { ...sel.modell.tage[t], urlaubswert: v } } },
+                            })
+                          );
+                        }}
+                      />
                     </div>
                   ))}
                 </div>
