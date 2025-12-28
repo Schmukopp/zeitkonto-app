@@ -8,7 +8,6 @@ import ProjektAbschluss from "./ui/ProjektAbschluss";
 import SettingsDrawer from "./ui/SettingsDrawer";
 import Board from "./ui/Board";
 
-
 import { loadState } from "./core/timeStore";
 import type { State } from "./core/timeStore";
 
@@ -31,13 +30,32 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
+type Tab = "heute" | "woche" | "board" | "zeitstrahl" | "abschluss" | "admin";
+
+const LS_ACTIVE_BOOKING = "orgaboard.activeBookingProjektId.v1";
+
 export default function App() {
   const [state, setStateRaw] = useState<State>(() => loadState());
   const [ms, setMsRaw] = useState<MitarbeiterState>(() => loadMitarbeiterState());
   const [settings, setSettingsRaw] = useState<Settings>(() => loadSettings());
 
-  const [tab, setTab] = useState<"heute" | "woche" | "zeitstrahl" | "abschluss" | "admin">("heute");
+  const [tab, setTab] = useState<Tab>("heute");
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+
+  // ✅ Aktives Buchungsziel (vom Board gesetzt)
+  const [activeBookingProjektId, setActiveBookingProjektId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(LS_ACTIVE_BOOKING) || "";
+    } catch {
+      return "";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_ACTIVE_BOOKING, activeBookingProjektId || "");
+    } catch {}
+  }, [activeBookingProjektId]);
 
   const setState = (updater: (s: State) => State) => {
     setStateRaw((prev) => updater(structuredClone(prev)));
@@ -75,6 +93,17 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [settings]);
 
+  // Mitarbeiterliste für Heute-Dropdown
+  const mitarbeiterOptions = useMemo(() => {
+    const list = (ms as any)?.mitarbeiter ?? [];
+    return Array.isArray(list)
+      ? list
+          .filter((m) => m && typeof m.id === "string")
+          .map((m) => ({ id: String(m.id), name: String(m.name ?? "Mitarbeiter") }))
+      : [];
+  }, [ms]);
+
+  // selected Mitarbeiter (bestehende Logik – für Woche/Abschluss bleibt es so)
   const selected = useMemo(() => getSelected(ms), [ms]);
   const mitarbeiterId = selected?.id ?? "m1";
   const mitarbeiterName = selected?.name ?? "Mitarbeiter";
@@ -84,11 +113,22 @@ export default function App() {
     return sollMinutenForIsoDate(modell, isoDate);
   }
 
+  // ✅ Heute: eigener Mitarbeiter-Tester (wie bei dir gewünscht)
+  const [heuteMitarbeiterId, setHeuteMitarbeiterId] = useState<string>(() => {
+    return selected?.id ?? mitarbeiterOptions[0]?.id ?? "m1";
+  });
+
+  useEffect(() => {
+    const preferred = selected?.id ?? mitarbeiterOptions[0]?.id ?? "m1";
+    const exists = mitarbeiterOptions.some((m) => m.id === heuteMitarbeiterId);
+    if (!exists) setHeuteMitarbeiterId(preferred);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, mitarbeiterOptions.map((m) => m.id).join("|")]);
+
   const btn =
     "rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:border-orange-500 hover:text-orange-300";
   const btnActive =
     "rounded-xl border border-orange-500 bg-orange-500 px-3 py-2 text-sm font-medium text-neutral-950";
-
   const iconBtn =
     "rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:border-orange-500 hover:text-orange-300";
 
@@ -108,13 +148,9 @@ export default function App() {
               <button className={tab === "woche" ? btnActive : btn} onClick={() => setTab("woche")}>
                 Woche
               </button>
-              <button
-  onClick={() => setTab("board")}
-  className={tab === "board" ? "rounded-lg px-3 py-2 text-sm font-medium bg-slate-900 text-white" : "rounded-lg px-3 py-2 text-sm font-medium hover:bg-slate-100"}
->
-  Board
-</button>
-
+              <button className={tab === "board" ? btnActive : btn} onClick={() => setTab("board")}>
+                Board
+              </button>
               <button className={tab === "zeitstrahl" ? btnActive : btn} onClick={() => setTab("zeitstrahl")}>
                 Zeitstrahl
               </button>
@@ -124,7 +160,6 @@ export default function App() {
               <button className={tab === "admin" ? btnActive : btn} onClick={() => setTab("admin")}>
                 Admin
               </button>
-
 
               <button className={iconBtn} onClick={() => setSettingsOpen(true)} title="Einstellungen">
                 ⚙
@@ -141,19 +176,25 @@ export default function App() {
         setSettings={setSettings}
       />
 
-            <div className="mx-auto max-w-6xl px-4 pt-20 pb-6">
+      <div className="mx-auto max-w-6xl px-4 pt-20 pb-6">
         {tab === "admin" ? (
           <div className="flex flex-col gap-3">
             <AdminMitarbeiter ms={ms} setMs={setMs} />
             <AdminProjekte state={state} setState={setState} ms={ms} />
           </div>
         ) : tab === "board" ? (
-  <Board state={state} setState={setState} ms={ms} />
-) : tab === "zeitstrahl" ? (
-
-
-
-
+          <Board
+            state={state}
+            setState={setState}
+            ms={ms}
+            activeBookingProjektId={activeBookingProjektId}
+            setActiveBookingProjektId={(pid) => {
+              setActiveBookingProjektId(pid);
+              // Optional: nach Klick im Board direkt in "Heute" wechseln
+              setTab("heute");
+            }}
+          />
+        ) : tab === "zeitstrahl" ? (
           <Zeitstrahlen state={state} setState={setState} ms={ms} settings={settings} />
         ) : tab === "abschluss" ? (
           <ProjektAbschluss
@@ -175,14 +216,17 @@ export default function App() {
           <Heute
             state={state}
             setState={setState}
-            mitarbeiterId={mitarbeiterId}
-            mitarbeiterName={mitarbeiterName}
+            mitarbeiterId={heuteMitarbeiterId}
+            mitarbeiterName={mitarbeiterOptions.find((m) => m.id === heuteMitarbeiterId)?.name ?? "Mitarbeiter"}
+            mitarbeiterOptions={mitarbeiterOptions}
+            onChangeMitarbeiterId={setHeuteMitarbeiterId}
             getTagesSollMinuten={getTagesSollMinuten}
             isoDate={todayIso()}
+            activeBookingProjektId={activeBookingProjektId}
+            clearActiveBooking={() => setActiveBookingProjektId("")}
           />
         )}
       </div>
-
     </div>
   );
 }

@@ -1,376 +1,389 @@
-import React, { useEffect, useMemo, useState } from "react";
-import type { State, Arbeitsart } from "../core/timeStore";
-import { setProjectActive } from "../core/timeStore";
-import type { MitarbeiterState } from "../core/mitarbeiterStore";
-import type { Bereich } from "../core/timeTypes";
-import type { Settings } from "../core/settingsStore";
-import {
-  loadBoardIds,
-  saveBoardIds,
-  loadNachkalkIds,
-  saveNachkalkIds,
-  addProjectToBoard,
-  removeProjectFromBoard,
-  removeProjectFromNachkalk,
-} from "../core/boardStore";
+// src/core/timeStore.ts
+import type { Buchung, Projekt, Bereich } from "./timeTypes";
 
-type Props = {
-  state: State;
-  setState: (updater: (s: State) => State) => void;
-  ms: MitarbeiterState;
-  settings: Settings;
+const LS_KEY = "orgaboard_time_v1";
+
+/**
+ * Arbeitsart ist dein Projekt-SOLL-Splitting (kalkMinuten pro Art).
+ * Zeitstrahlen.tsx importiert Arbeitsart aus timeStore, daher export hier.
+ */
+export type Arbeitsart = "maschine" | "bank" | "lack" | "montage";
+
+export type RunningTimer = {
+  mitarbeiterId: string;
+  projektId: string;
+  bereich: Bereich;
+  startTs: number;
+  datum: string; // ✅ für Board (Auto-Sprung) + Nachtragen
+  note?: string;
 };
 
-function minutesToHours(min: number): number {
-  return (Number(min) || 0) / 60;
-}
-function fmt1(n: number): string {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return "0.0";
-  return x.toFixed(1);
-}
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(1, x));
-}
+export type BoardLayoutPos = { rowId: string; startCol: number };
 
-function bereichToArbeitsart(b: Bereich): Arbeitsart | null {
-  const v = String(b);
-  if (v === "maschine") return "maschine";
-  if (v === "bank") return "bank";
-  if (v === "lack") return "lack";
-  if (v === "montage") return "montage";
-  return null;
+export type State = {
+  projects: Projekt[];
+  buchungen: Buchung[];
+  running: RunningTimer | null;
+
+  // optional: wird von Board.tsx genutzt (wenn du Layout persistieren willst)
+  boardLayout?: Record<string, BoardLayoutPos>;
+};
+
+function uid() {
+  return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
-type IstMap = Record<string, Record<Arbeitsart, number>>;
+function clamp(n: number, min: number, max: number) {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
 
-function calcIstMinByProjektArbeitsart(state: State): IstMap {
-  const out: IstMap = {};
-  for (const b of state.buchungen ?? []) {
-    if (!b || b.art !== "arbeit") continue;
+function num(v: unknown): number {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
+}
 
-    const pid = (b as any).projektId as string | undefined;
-    if (!pid) continue;
+function str(v: unknown, fallback = ""): string {
+  const s = String(v ?? "");
+  return s.trim() ? s : fallback;
+}
 
-    const aa = bereichToArbeitsart((b as any).bereich as Bereich);
-    if (!aa) continue;
+function todayIso(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
-    const mins = Number((b as any).minuten) || 0;
-    if (mins <= 0) continue;
+function normalizeArbeitsarten(p: any): any {
+  // akzeptiert: p.arbeitsarten[aa].kalkMinuten
+  const aa = p?.arbeitsarten;
+  if (!aa || typeof aa !== "object") return undefined;
 
-    if (!out[pid]) out[pid] = { maschine: 0, bank: 0, lack: 0, montage: 0 };
-    out[pid][aa] = (out[pid][aa] ?? 0) + mins;
-  }
+  const out: Record<Arbeitsart, { kalkMinuten: number }> = {
+    maschine: { kalkMinuten: 0 },
+    bank: { kalkMinuten: 0 },
+    lack: { kalkMinuten: 0 },
+    montage: { kalkMinuten: 0 },
+  };
+
+  (["maschine", "bank", "lack", "montage"] as Arbeitsart[]).forEach((k) => {
+    const v = aa?.[k]?.kalkMinuten;
+    out[k] = { kalkMinuten: clamp(num(v) || 0, 0, 999999) };
+  });
+
   return out;
 }
 
-function getSollMinFor(proj: any, aa: Arbeitsart): number {
-  return Number(proj?.arbeitsarten?.[aa]?.kalkMinuten) || 0;
+export function loadState(): State {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<State>;
+
+      // Projekte normalisieren
+      const projects: Projekt[] = (parsed.projects ?? []).map((p: any) => {
+        const fixed: any = {
+          ...p,
+          id: str(p?.id, uid()),
+          name: str(p?.name, "Projekt"),
+          active: p?.active !== false,
+
+          // kalkStunden (Alt-Feld)
+          kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
+
+          // optional: Meta
+          kunde: p?.kunde != null ? str(p.kunde) : undefined,
+          notiz: p?.notiz != null ? str(p.notiz) : undefined,
+
+          hauptdarstellerId: p?.hauptdarstellerId != null ? str(p.hauptdarstellerId) : undefined,
+          zugeordnetAnId: p?.zugeordnetAnId != null ? str(p.zugeordnetAnId) : undefined,
+
+          // Arbeitsarten (SOLL-Splitting)
+          arbeitsarten: normalizeArbeitsarten(p),
+
+          // PLAN
+          planNettoVkEur: clamp(num(p?.planNettoVkEur) || 0, 0, 99999999),
+          planMaterialEur: clamp(num(p?.planMaterialEur) || 0, 0, 99999999),
+
+          // IST
+          istNettoVkEur: clamp(num(p?.istNettoVkEur) || 0, 0, 99999999),
+          istMaterialEur: clamp(num(p?.istMaterialEur) || 0, 0, 99999999),
+        };
+
+        return fixed as Projekt;
+      });
+
+      // Buchungen normalisieren (wir lassen Details durch, aber sichern Minimalfelder)
+      const buchungen: Buchung[] = Array.isArray(parsed.buchungen) ? (parsed.buchungen as any) : [];
+
+      // running normalisieren
+      let running: RunningTimer | null = (parsed.running as any) ?? null;
+      if (running) {
+        const fixed: RunningTimer = {
+          mitarbeiterId: str((running as any).mitarbeiterId),
+          projektId: str((running as any).projektId),
+          bereich: (running as any).bereich as Bereich,
+          startTs: num((running as any).startTs) || Date.now(),
+          datum: str((running as any).datum, todayIso()),
+          note: (running as any).note != null ? str((running as any).note) : undefined,
+        };
+
+        // harte Minimalvalidierung
+        if (!fixed.mitarbeiterId || !fixed.projektId || !fixed.bereich) running = null;
+        else running = fixed;
+      }
+
+      const state: State = {
+        projects:
+          projects.length > 0
+            ? projects
+            : ([
+                { id: "p1", name: "Allgemein", active: true, kalkStunden: 0 },
+                { id: "p2", name: "Projekt A", active: true, kalkStunden: 10 },
+                { id: "p3", name: "Projekt B", active: true, kalkStunden: 20 },
+              ] as any),
+        buchungen,
+        running,
+        boardLayout: (parsed as any).boardLayout ?? undefined,
+      };
+
+      return state;
+    }
+  } catch (err) {
+    // bewusst still/robust
+    console.warn("loadState failed", err);
+  }
+
+  return {
+    projects: [
+      { id: "p1", name: "Allgemein", active: true, kalkStunden: 0 } as any,
+      { id: "p2", name: "Projekt A", active: true, kalkStunden: 10 } as any,
+      { id: "p3", name: "Projekt B", active: true, kalkStunden: 20 } as any,
+    ],
+    buchungen: [],
+    running: null,
+  };
 }
 
-function Segment(p: { label: string; sollMin: number; istMin: number }) {
-  const { sollMin, istMin } = p;
-
-  // Kein Soll => neutral
-  if ((Number(sollMin) || 0) <= 0) {
-    return (
-      <div className="flex-1 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1">
-        <div className="text-[10px] text-neutral-500">{p.label}</div>
-        <div className="mt-1 h-2 rounded bg-neutral-800" />
-      </div>
-    );
+export function saveState(s: State) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(s));
+  } catch (err) {
+    console.warn("saveState failed", err);
   }
-
-  const ratio = clamp01((Number(istMin) || 0) / (Number(sollMin) || 1));
-  const over = (Number(istMin) || 0) > (Number(sollMin) || 0);
-
-  return (
-    <div className="flex-1 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1">
-      <div className="text-[10px] text-neutral-500">{p.label}</div>
-      <div className="mt-1 h-2 w-full rounded bg-neutral-800 overflow-hidden">
-        <div
-          className={over ? "h-full bg-orange-500" : "h-full bg-neutral-200"}
-          style={{ width: `${Math.max(3, Math.round(ratio * 100))}%` }}
-        />
-      </div>
-    </div>
-  );
 }
 
-export default function Zeitstrahlen(p: Props) {
-  const allProjects = p.state.projects ?? [];
-  const mitarbeiter = p.ms.mitarbeiter ?? [];
+// --- Status pro Tag: genau 1 (urlaub/krank/ueberstundenabbau) ----------------
 
-  // zentral persistiert
-  const [boardIds, setBoardIds] = useState<string[]>(() => loadBoardIds());
-  const [nachkalkIds, setNachkalkIds] = useState<string[]>(() => loadNachkalkIds());
+export function ensureOneStatusPerDay(b: Buchung[], mitarbeiterId: string, datum: string) {
+  return (b ?? []).filter(
+    (x: any) =>
+      !(
+        x?.mitarbeiterId === mitarbeiterId &&
+        x?.datum === datum &&
+        (x?.art === "urlaub" || x?.art === "krank" || x?.art === "ueberstundenabbau")
+      )
+  ) as any;
+}
 
-  useEffect(() => saveBoardIds(boardIds), [boardIds]);
-  useEffect(() => saveNachkalkIds(nachkalkIds), [nachkalkIds]);
+// --- Timer ------------------------------------------------------------------
 
-  const [showPool, setShowPool] = useState<boolean>(true);
-  const [poolQuery, setPoolQuery] = useState<string>("");
-  const [poolShowNachkalk, setPoolShowNachkalk] = useState<boolean>(false);
+/**
+ * startTimer:
+ * - datum MUSS übergeben werden (damit Nachtragen/Board korrekt ist)
+ * - überschreibt bewusst laufenden Timer (simpel & praxisfest)
+ */
+export function startTimer(
+  s: State,
+  args: { mitarbeiterId: string; projektId: string; bereich: Bereich; datum: string; note?: string }
+) {
+  s.running = {
+    mitarbeiterId: str(args.mitarbeiterId),
+    projektId: str(args.projektId),
+    bereich: args.bereich,
+    datum: str(args.datum, todayIso()),
+    startTs: Date.now(),
+    note: args.note != null ? str(args.note) : undefined,
+  };
+  saveState(s);
+}
 
-  const istMap = useMemo(() => calcIstMinByProjektArbeitsart(p.state), [p.state]);
+/**
+ * stopTimer:
+ * - nutzt running.datum
+ * - datumOverride optional, damit alte Aufrufer nicht brechen
+ */
+export function stopTimer(s: State, datumOverride?: string) {
+  if (!s.running) return;
 
-  function getMName(mid?: string): string {
-    if (!mid) return "—";
-    return mitarbeiter.find((m) => m.id === mid)?.name ?? mid;
+  const endTs = Date.now();
+  const minutes = Math.max(0, Math.round((endTs - s.running.startTs) / 60000));
+  const datum = str(datumOverride ?? s.running.datum, todayIso());
+
+  s.buchungen.push({
+    id: uid(),
+    mitarbeiterId: s.running.mitarbeiterId,
+    datum,
+    art: "arbeit",
+    projektId: s.running.projektId,
+    bereich: s.running.bereich,
+    startTs: s.running.startTs,
+    endeTs: endTs,
+    minuten: minutes,
+    note: s.running.note,
+  } as any);
+
+  s.running = null;
+  saveState(s);
+}
+
+// --- Status -----------------------------------------------------------------
+
+export function upsertStatus(
+  s: State,
+  args: {
+    mitarbeiterId: string;
+    datum: string;
+    art: "urlaub" | "krank" | "ueberstundenabbau";
+    minuten: number | null;
+    note?: string;
   }
+) {
+  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), str(args.datum));
+  s.buchungen.push({
+    id: uid(),
+    mitarbeiterId: str(args.mitarbeiterId),
+    datum: str(args.datum),
+    art: args.art,
+    minuten: args.minuten == null ? null : Math.max(0, num(args.minuten) || 0),
+    note: args.note != null ? str(args.note) : undefined,
+  } as any);
+  saveState(s);
+}
 
-  const byId = useMemo(() => new Map(allProjects.map((x) => [x.id, x])), [allProjects]);
+export function clearStatus(s: State, args: { mitarbeiterId: string; datum: string }) {
+  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), str(args.datum));
+  saveState(s);
+}
 
-  const boardProjects = useMemo(() => {
-    return boardIds.map((id) => byId.get(id)).filter(Boolean) as any[];
-  }, [boardIds, byId]);
+// --- Buchungen bearbeiten ----------------------------------------------------
 
-  const poolList = useMemo(() => {
-    const q = poolQuery.trim().toLowerCase();
+export function updateArbeitsBuchung(
+  s: State,
+  id: string,
+  patch: Partial<{ minuten: number; note: string; projektId: string; bereich: Bereich }>
+) {
+  s.buchungen = (s.buchungen ?? []).map((b: any) => {
+    if (!b || b.id !== id) return b;
+    if (b.art !== "arbeit") return b;
 
-    const base = allProjects.filter((proj) => {
-      if (boardIds.includes(proj.id)) return false;
+    return {
+      ...b,
+      projektId: patch.projektId != null ? str(patch.projektId) : b.projektId,
+      bereich: patch.bereich != null ? patch.bereich : b.bereich,
+      note: patch.note != null ? str(patch.note) : b.note,
+      minuten: patch.minuten != null ? Math.max(0, num(patch.minuten) || 0) : b.minuten,
+    };
+  }) as any;
 
-      // Pool zeigt nur inaktive
-      if (proj.active === true) return false;
+  saveState(s);
+}
 
-      // Nachkalk optional ausblenden
-      const isNachkalk = nachkalkIds.includes(proj.id);
-      if (isNachkalk && !poolShowNachkalk) return false;
+export function deleteBuchung(s: State, id: string) {
+  s.buchungen = (s.buchungen ?? []).filter((b: any) => b?.id !== id) as any;
+  saveState(s);
+}
 
-      return true;
-    });
+// --- Projekte ----------------------------------------------------------------
 
-    const filtered = base.filter((proj) => {
-      if (!q) return true;
-      const hay = `${proj.name ?? ""} ${proj.id ?? ""}`.toLowerCase();
-      return hay.includes(q);
-    });
+export function getActiveProjects(s: State): Projekt[] {
+  return (s.projects ?? []).filter((p: any) => p?.active !== false) as any;
+}
 
-    filtered.sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? "")));
-    return filtered;
-  }, [allProjects, boardIds, nachkalkIds, poolQuery, poolShowNachkalk]);
+export function createProject(s: State, name = "Neues Projekt"): State {
+  const p: any = {
+    id: uid(),
+    name: str(name, "Neues Projekt"),
+    active: true,
 
-  function addToBoard(pid: string) {
-    // Aufs Board: aktivieren + aus Nachkalk entfernen
-    p.setState((s) => setProjectActive(s, pid, true));
-    removeProjectFromNachkalk(pid);
-    setNachkalkIds(loadNachkalkIds());
+    kalkStunden: 0,
 
-    addProjectToBoard(pid);
-    setBoardIds(loadBoardIds());
-  }
+    // Arbeitsarten default (optional)
+    arbeitsarten: {
+      maschine: { kalkMinuten: 0 },
+      bank: { kalkMinuten: 0 },
+      lack: { kalkMinuten: 0 },
+      montage: { kalkMinuten: 0 },
+    },
 
-  function removeFromBoard(pid: string) {
-    // Runternehmen: zurück in Pool (inaktiv). Fertig kommt aus Mitarbeiter-App.
-    p.setState((s) => setProjectActive(s, pid, false));
-    removeProjectFromBoard(pid);
-    setBoardIds(loadBoardIds());
+    // Plan/Ist default
+    planNettoVkEur: 0,
+    planMaterialEur: 0,
+    istNettoVkEur: 0,
+    istMaterialEur: 0,
+  };
 
-    // bleibt NICHT automatisch in Nachkalk
-    removeProjectFromNachkalk(pid);
-    setNachkalkIds(loadNachkalkIds());
-  }
+  s.projects = [...(s.projects ?? []), p];
+  saveState(s);
+  return s;
+}
 
-  const btn =
-    "rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:border-orange-500 hover:text-orange-300";
-  const btnActive =
-    "rounded-xl border border-orange-500 bg-orange-500 px-3 py-2 text-sm font-medium text-neutral-950";
+export function upsertProject(s: State, patch: Projekt): State {
+  const p: any = patch as any;
 
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-2xl font-semibold">Zeitstrahl / Board-Zwischenstand</div>
-            <div className="text-sm text-neutral-400">
-              Board ist der Arbeitsfluss. Details steuerst du über ⚙ (Zahlen/Segmente).
-            </div>
-          </div>
+  const fixed: any = {
+    ...p,
+    id: str(p?.id, uid()),
+    name: str(p?.name, "Projekt"),
+    active: p?.active !== false,
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button className={showPool ? btnActive : btn} onClick={() => setShowPool((v) => !v)}>
-              {showPool ? "Pool: An" : "Pool: Aus"}
-            </button>
-          </div>
-        </div>
+    kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
 
-        <div className="mt-3 text-sm text-neutral-400">
-          Board: <span className="text-neutral-100">{boardProjects.length}</span> · Pool (inaktiv):{" "}
-          <span className="text-neutral-100">{poolList.length}</span> · Nachkalk:{" "}
-          <span className="text-neutral-100">{nachkalkIds.length}</span>
-        </div>
-      </div>
+    kunde: p?.kunde != null ? str(p.kunde) : undefined,
+    notiz: p?.notiz != null ? str(p.notiz) : undefined,
 
-      {/* Pool */}
-      {showPool && (
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="text-lg font-semibold">Projekt-Pool (inaktiv)</div>
-              <div className="text-sm text-neutral-400">„Aufs Board“ macht das Projekt aktiv.</div>
-            </div>
+    hauptdarstellerId: p?.hauptdarstellerId != null ? str(p.hauptdarstellerId) : undefined,
+    zugeordnetAnId: p?.zugeordnetAnId != null ? str(p.zugeordnetAnId) : undefined,
 
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <div className="text-xs text-neutral-400 mb-1">Suche</div>
-                <input
-                  className="w-64 rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                  placeholder="Name oder ID…"
-                  value={poolQuery}
-                  onChange={(e) => setPoolQuery(e.target.value)}
-                />
-              </div>
+    arbeitsarten: normalizeArbeitsarten(p) ?? p?.arbeitsarten,
 
-              <label className="flex items-center gap-2 text-sm text-neutral-300 pb-2">
-                <input
-                  type="checkbox"
-                  className="accent-orange-500"
-                  checked={poolShowNachkalk}
-                  onChange={(e) => setPoolShowNachkalk(e.target.checked)}
-                />
-                Nachkalk anzeigen
-              </label>
-            </div>
-          </div>
+    planNettoVkEur: clamp(num(p?.planNettoVkEur) || 0, 0, 99999999),
+    planMaterialEur: clamp(num(p?.planMaterialEur) || 0, 0, 99999999),
+    istNettoVkEur: clamp(num(p?.istNettoVkEur) || 0, 0, 99999999),
+    istMaterialEur: clamp(num(p?.istMaterialEur) || 0, 0, 99999999),
+  };
 
-          <div className="mt-3 grid grid-cols-1 gap-2">
-            {poolList.length === 0 && <div className="text-sm text-neutral-400">Keine Projekte im Pool.</div>}
+  const list: any[] = s.projects ?? [];
+  const idx = list.findIndex((x) => String(x?.id) === fixed.id);
+  s.projects = idx >= 0 ? list.map((x) => (String(x?.id) === fixed.id ? fixed : x)) : [...list, fixed];
 
-            {poolList.map((proj: any) => {
-              const isNachkalk = nachkalkIds.includes(proj.id);
-              const ist = istMap[proj.id] ?? { maschine: 0, bank: 0, lack: 0, montage: 0 };
+  saveState(s);
+  return s;
+}
 
-              const sollM = getSollMinFor(proj, "maschine");
-              const sollB = getSollMinFor(proj, "bank");
-              const sollL = getSollMinFor(proj, "lack");
-              const sollMo = getSollMinFor(proj, "montage");
+export function setProjectActive(s: State, id: string, active: boolean): State {
+  const targetId = str(id);
 
-              const sumSoll = sollM + sollB + sollL + sollMo;
-              const sumIst = (ist.maschine ?? 0) + (ist.bank ?? 0) + (ist.lack ?? 0) + (ist.montage ?? 0);
-              const delta = sumSoll - sumIst;
+  s.projects = (s.projects ?? []).map((p: any) => {
+    if (String(p?.id) !== targetId) return p;
 
-              return (
-                <div
-                  key={proj.id}
-                  className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3 flex flex-col gap-2"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm text-neutral-100 truncate">
-                        {proj.name || "Ohne Name"} <span className="text-neutral-500">·</span>{" "}
-                        <span className="text-neutral-400">{proj.id}</span>{" "}
-                        {isNachkalk ? (
-                          <span className="text-xs text-orange-300">· Nachkalk</span>
-                        ) : (
-                          <span className="text-xs text-neutral-500">· inaktiv</span>
-                        )}
-                      </div>
+    return {
+      ...p,
+      active,
 
-                      {p.settings.showDetailsInPool && (
-                        <div className="text-xs text-neutral-500">
-                          Führung: <span className="text-neutral-300">{getMName(proj.hauptdarstellerId)}</span> ·
-                          Operativ: <span className="text-neutral-300">{getMName(proj.zugeordnetAnId)}</span>
-                        </div>
-                      )}
-                    </div>
+      kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
 
-                    <button className={btn} onClick={() => addToBoard(proj.id)}>
-                      Aufs Board
-                    </button>
-                  </div>
+      arbeitsarten: normalizeArbeitsarten(p) ?? p?.arbeitsarten,
 
-                  {p.settings.showArbeitsartIndicator && (
-                    <div className="flex gap-2">
-                      <Segment label="M" sollMin={sollM} istMin={ist.maschine ?? 0} />
-                      <Segment label="B" sollMin={sollB} istMin={ist.bank ?? 0} />
-                      <Segment label="L" sollMin={sollL} istMin={ist.lack ?? 0} />
-                      <Segment label="Mo" sollMin={sollMo} istMin={ist.montage ?? 0} />
-                    </div>
-                  )}
+      planNettoVkEur: clamp(num(p?.planNettoVkEur) || 0, 0, 99999999),
+      planMaterialEur: clamp(num(p?.planMaterialEur) || 0, 0, 99999999),
+      istNettoVkEur: clamp(num(p?.istNettoVkEur) || 0, 0, 99999999),
+      istMaterialEur: clamp(num(p?.istMaterialEur) || 0, 0, 99999999),
+    };
+  }) as any;
 
-                  {p.settings.showNumbersOnBoard && (
-                    <div className="text-xs text-neutral-400 tabular-nums">
-                      Summe: Soll {fmt1(minutesToHours(sumSoll))}h · Ist {fmt1(minutesToHours(sumIst))}h · Delta{" "}
-                      <span className={delta < 0 ? "text-orange-300" : "text-neutral-200"}>
-                        {fmt1(minutesToHours(delta))}h
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Board */}
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-        <div className="text-lg font-semibold">Board (aktive Projekte)</div>
-        <div className="text-sm text-neutral-400">„Runternehmen“ = zurück in Pool (inaktiv).</div>
-
-        {boardProjects.length === 0 && <div className="mt-3 text-sm text-neutral-400">Board ist leer.</div>}
-
-        {boardProjects.length > 0 && (
-          <div className="mt-3 grid grid-cols-1 gap-2">
-            {boardProjects.map((proj: any) => {
-              const ist = istMap[proj.id] ?? { maschine: 0, bank: 0, lack: 0, montage: 0 };
-
-              const sollM = getSollMinFor(proj, "maschine");
-              const sollB = getSollMinFor(proj, "bank");
-              const sollL = getSollMinFor(proj, "lack");
-              const sollMo = getSollMinFor(proj, "montage");
-
-              const sumSoll = sollM + sollB + sollL + sollMo;
-              const sumIst = (ist.maschine ?? 0) + (ist.bank ?? 0) + (ist.lack ?? 0) + (ist.montage ?? 0);
-              const delta = sumSoll - sumIst;
-
-              return (
-                <div
-                  key={proj.id}
-                  className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3 flex flex-col gap-2"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-sm text-neutral-100 truncate">
-                        {proj.name || "Ohne Name"} <span className="text-neutral-500">·</span>{" "}
-                        <span className="text-neutral-400">{proj.id}</span>
-                      </div>
-                      <div className="text-xs text-neutral-500">
-                        Führung: <span className="text-neutral-300">{getMName(proj.hauptdarstellerId)}</span> ·
-                        Operativ: <span className="text-neutral-300">{getMName(proj.zugeordnetAnId)}</span>
-                      </div>
-                    </div>
-
-                    <button className={btn} onClick={() => removeFromBoard(proj.id)}>
-                      Runternehmen
-                    </button>
-                  </div>
-
-                  {p.settings.showArbeitsartIndicator && (
-                    <div className="flex gap-2">
-                      <Segment label="M" sollMin={sollM} istMin={ist.maschine ?? 0} />
-                      <Segment label="B" sollMin={sollB} istMin={ist.bank ?? 0} />
-                      <Segment label="L" sollMin={sollL} istMin={ist.lack ?? 0} />
-                      <Segment label="Mo" sollMin={sollMo} istMin={ist.montage ?? 0} />
-                    </div>
-                  )}
-
-                  {p.settings.showNumbersOnBoard && (
-                    <div className="text-xs text-neutral-400 tabular-nums">
-                      Summe: Soll {fmt1(minutesToHours(sumSoll))}h · Ist {fmt1(minutesToHours(sumIst))}h · Delta{" "}
-                      <span className={delta < 0 ? "text-orange-300" : "text-neutral-200"}>
-                        {fmt1(minutesToHours(delta))}h
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  saveState(s);
+  return s;
 }

@@ -5,7 +5,7 @@ const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(ma
 export function sumArbeitsMinuten(b: Buchung[], datum: string, mitarbeiterId: string) {
   return b
     .filter((x) => x.mitarbeiterId === mitarbeiterId && x.datum === datum && x.art === "arbeit")
-    .reduce((a, x) => a + (Number(x.minuten) || 0), 0);
+    .reduce((a, x) => a + (Number((x as any).minuten) || 0), 0);
 }
 
 export function getStatus(b: Buchung[], datum: string, mitarbeiterId: string): StatusBuchung | null {
@@ -37,10 +37,10 @@ export function calcStatusMinuten(
   }
 
   const desired =
-    status.minuten == null ? maxProTag : clamp(Math.max(0, Number(status.minuten) || 0), 0, maxProTag);
+    (status as any).minuten == null
+      ? maxProTag
+      : clamp(Math.max(0, Number((status as any).minuten) || 0), 0, maxProTag);
 
-  // Für alle Statusarten gilt: max pro Tag = sollMinuten
-  // (Kein Rest-Limit mehr!)
   const applied = clamp(desired, 0, maxProTag);
 
   return { statusMinuten: applied, maxAbbauMinuten: maxProTag, appliedStatusMinuten: applied };
@@ -72,7 +72,7 @@ export function calcDaySummary(args: {
   let deltaUeberstundenMinuten = arbeitMinuten - sollMinuten;
 
   if (status?.art === "urlaub" || status?.art === "krank") {
-    deltaUeberstundenMinuten = arbeitMinuten; // effektivSoll = 0
+    deltaUeberstundenMinuten = arbeitMinuten;
   } else if (status?.art === "ueberstundenabbau") {
     deltaUeberstundenMinuten = arbeitMinuten - appliedStatusMinuten;
   }
