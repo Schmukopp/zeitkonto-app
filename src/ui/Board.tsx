@@ -25,43 +25,60 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
+// ===== Kalenderfest (UTC) =====
 function isoDate(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const y = d.getUTCFullYear();
+  const m = pad2(d.getUTCMonth() + 1);
+  const day = pad2(d.getUTCDate());
+  return `${y}-${m}-${day}`;
 }
 
 function parseIso(iso: string): Date {
   const [y, m, d] = iso.split("-").map((x) => Number(x));
-  const dt = new Date(y, (m || 1) - 1, d || 1);
-  dt.setHours(0, 0, 0, 0);
-  return dt;
-}
-
-function startOfIsoWeek(d: Date) {
-  const x = new Date(d);
-  const day = x.getDay(); // 0=So..6=Sa
-  const diff = (day === 0 ? -6 : 1) - day; // Montag
-  x.setDate(x.getDate() + diff);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 0, 0, 0, 0));
 }
 
 function addDays(d: Date, days: number) {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
+  const x = new Date(d.getTime());
+  x.setUTCDate(x.getUTCDate() + days);
   return x;
 }
 
-function isoWeekNumber(date: Date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-  const week1 = new Date(d.getFullYear(), 0, 4);
-  return (
-    1 +
-    Math.round(
-      ((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7
-    )
-  );
+function startOfWeekMondayUTC(d: Date) {
+  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+  const day = x.getUTCDay(); // 0=So..6=Sa
+  const diff = (day === 0 ? -6 : 1) - day; // Montag
+  x.setUTCDate(x.getUTCDate() + diff);
+  return x;
+}
+
+// ===== Kalenderjahr-KW (erste KW = Woche ab erstem Montag im Jahr) =====
+function firstMondayOfYearUTC(year: number): Date {
+  const jan1 = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+  const dow = jan1.getUTCDay(); // 0=So..6=Sa
+  const offset = (dow === 0 ? 1 : 8 - dow) % 7; // bis Montag
+  return new Date(Date.UTC(year, 0, 1 + offset, 0, 0, 0, 0));
+}
+
+function kalenderjahrKW(date: Date): number {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
+  const year = d.getUTCFullYear();
+  const firstMon = firstMondayOfYearUTC(year);
+
+  const diffDays = Math.floor((d.getTime() - firstMon.getTime()) / 86400000);
+
+  // Tage vor erstem Montag: wir geben KW 1 aus (praktisch, keine KW0)
+  if (diffDays < 0) return 1;
+
+  return Math.floor(diffDays / 7) + 1;
+}
+
+// Anzeige-Ende einer KW im Kalenderjahr: Mo–Sa, aber niemals über 31.12 hinaus
+function weekEndDisplayMoSaCapped(weekStartMonday: Date): Date {
+  const year = weekStartMonday.getUTCFullYear();
+  const end = addDays(weekStartMonday, 5); // Mo–Sa
+  const dec31 = new Date(Date.UTC(year, 11, 31, 0, 0, 0, 0));
+  return end.getTime() > dec31.getTime() ? dec31 : end;
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -162,7 +179,8 @@ function extractProjectTotals(state: any) {
     const datum = String((e as any).datum ?? "");
     if (!projektId || !datum) continue;
 
-    const minutes = Math.max(0, safeNumber((e as any).minuten) || 0);
+    const min = safeNumber((e as any).minuten) || safeNumber((e as any).stunden) * 60 || 0;
+    const minutes = Math.max(0, Math.round(min));
     if (minutes <= 0) continue;
 
     totalMin.set(projektId, (totalMin.get(projektId) ?? 0) + minutes);
@@ -182,7 +200,9 @@ function extractProjectTotals(state: any) {
 }
 
 // ===== Tages-Spuren je Mitarbeiter (alle Projekte) =====
-function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ projektId: string; minuten: number }>> {
+function extractEmployeeDayProjectMinutes(
+  state: any
+): Map<string, Array<{ projektId: string; minuten: number }>> {
   const arr = Array.isArray(state?.buchungen) ? state.buchungen : [];
   const tmp = new Map<string, Map<string, number>>();
 
@@ -195,7 +215,8 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
     const datum = String((e as any).datum ?? "");
     if (!mitarbeiterId || !projektId || !datum) continue;
 
-    const minutes = Math.max(0, safeNumber((e as any).minuten) || 0);
+    const min = safeNumber((e as any).minuten) || safeNumber((e as any).stunden) * 60 || 0;
+    const minutes = Math.max(0, Math.round(min));
     if (minutes <= 0) continue;
 
     const key = `${mitarbeiterId}__${datum}`;
@@ -217,7 +238,7 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
 }
 
 // ===== Planung (Layout) =====
-type LayoutPos = { rowId: string; startCol: number }; // operativ + start
+type LayoutPos = { rowId: string; startCol: number };
 type LayoutMap = Record<string, LayoutPos>;
 
 type Block = {
@@ -243,7 +264,6 @@ type BlockPart = {
   relStart: number;
 };
 
-// ===== Planung: fortlaufend (snap to next free slot) =====
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number) {
   return aStart < bEnd && bStart < aEnd;
 }
@@ -277,7 +297,6 @@ function findNextFreeStartCol(
   return cols - 1;
 }
 
-// ===== Lane packing (keine Zufallspositionen) =====
 function assignLanes(parts: Array<{ key: string; startCol: number; span: number }>, lanes: number) {
   const sorted = parts.slice().sort((a, b) => (a.startCol - b.startCol) || (a.span - b.span));
 
@@ -312,7 +331,7 @@ export default function Board({ state, setState, ms }: Props) {
   // 8 Wochen: oben 4, unten 4. Aktuelle Woche oben 2. von links
   const { topWeeks, bottomWeeks } = useMemo(() => {
     const now = new Date();
-    const cw = startOfIsoWeek(now);
+    const cw = startOfWeekMondayUTC(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)));
     const top = [addDays(cw, -7), cw, addDays(cw, 7), addDays(cw, 14)];
     const bot = [addDays(cw, 21), addDays(cw, 28), addDays(cw, 35), addDays(cw, 42)];
     return { topWeeks: top, bottomWeeks: bot };
@@ -371,9 +390,7 @@ export default function Board({ state, setState, ms }: Props) {
 
       const defaultOperativ = pickOperativDefaultId(p);
       const fallbackRowId = String(
-        defaultOperativ ??
-          mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ??
-          "m1"
+        defaultOperativ ?? mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ?? "m1"
       );
       rr++;
 
@@ -498,10 +515,7 @@ export default function Board({ state, setState, ms }: Props) {
     setDraggingId(null);
   }
 
-  function onDropOnLane(
-    e: React.DragEvent,
-    target: { rowId: string; weekRow: 0 | 1; col: number }
-  ) {
+  function onDropOnLane(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
     e.preventDefault();
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
@@ -524,15 +538,11 @@ export default function Board({ state, setState, ms }: Props) {
     // Fortlaufend: nächste freie Stelle ab Drop-Spalte
     const snappedCol = findNextFreeStartCol(target.col, spanCols, existingTopParts, COLS);
 
-    saveLayout(projectId, {
-      rowId: String(target.rowId),
-      startCol: snappedCol,
-    });
-
+    saveLayout(projectId, { rowId: String(target.rowId), startCol: snappedCol });
     setDraggingId(null);
   }
 
-  // Fokus auf laufendes Projekt (damit man es direkt findet)
+  // Fokus auf laufendes Projekt
   useEffect(() => {
     const pid = running?.projektId ? String(running.projektId) : null;
     if (!pid) return;
@@ -548,6 +558,52 @@ export default function Board({ state, setState, ms }: Props) {
     sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
   }, [running?.projektId, blockParts]);
 
+  // ===== DEBUG (auto) =====
+  const debug = useMemo(() => {
+    const all = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
+    const arbeits = all.filter((b) => b && typeof b === "object" && b.art === "arbeit");
+
+    const sorted = arbeits
+      .slice()
+      .sort(
+        (a, b) =>
+          (safeNumber(b.endeTs) - safeNumber(a.endeTs)) || (safeNumber(b.startTs) - safeNumber(a.startTs))
+      );
+
+    const last = sorted[0] ?? null;
+    const lastDatum = last ? String(last.datum ?? "") : "";
+    const lastMitarbeiterId = last ? String(last.mitarbeiterId ?? "") : "";
+    const lastProjektId = last ? String(last.projektId ?? "") : "";
+    const lastMinuten = last ? (safeNumber(last.minuten) || safeNumber(last.stunden) * 60 || 0) : 0;
+
+    const key = lastDatum && lastMitarbeiterId ? `${lastMitarbeiterId}__${lastDatum}` : "";
+    const hits = key ? (empDayProjIdx.get(key) ?? []).length : 0;
+
+    const last12 = sorted.slice(0, 12).map((x) => ({
+      datum: String(x?.datum ?? ""),
+      mitarbeiterId: String(x?.mitarbeiterId ?? ""),
+      projektId: String(x?.projektId ?? ""),
+      minuten: Math.max(0, Math.round(safeNumber(x?.minuten) || safeNumber(x?.stunden) * 60 || 0)),
+    }));
+
+    return {
+      totalAll: all.length,
+      totalArbeits: arbeits.length,
+      last,
+      lastDatum,
+      lastMitarbeiterId,
+      lastProjektId,
+      lastMinuten,
+      key,
+      hits,
+      colTop: lastDatum ? colForIso(0, lastDatum) : null,
+      colBottom: lastDatum ? colForIso(1, lastDatum) : null,
+      last12,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, empDayProjIdx]);
+  // ===== DEBUG END =====
+
   function renderSection(weekRow: 0 | 1, weeks4: Date[], scrollRef: React.RefObject<HTMLDivElement>) {
     const parts = blockParts.filter((p) => p.weekRow === weekRow);
     const activeCol = running?.datum ? colForIso(weekRow, running.datum) : null;
@@ -558,18 +614,25 @@ export default function Board({ state, setState, ms }: Props) {
           <div className="min-w-max">
             {/* KW Header */}
             <div className="flex">
-              <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 32 }} />
+              <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 40 }} />
               {weeks4.map((wStart, idx) => {
                 const isCurrent = weekRow === 0 && idx === 1;
+                const kw = kalenderjahrKW(wStart);
+                const from = isoDate(wStart);
+                const to = isoDate(weekEndDisplayMoSaCapped(wStart));
+
                 return (
                   <div
                     key={idx}
-                    className={`flex items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
+                    className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
                       isCurrent ? "bg-orange-500 text-neutral-950" : "bg-neutral-900 text-neutral-300"
                     }`}
-                    style={{ width: 6 * CELL_W, height: 32 }}
+                    style={{ width: 6 * CELL_W, height: 40 }}
                   >
-                    KW {isoWeekNumber(wStart)}
+                    <div>KW {kw}</div>
+                    <div className={`${isCurrent ? "text-neutral-900" : "text-neutral-500"} text-[10px] font-medium`}>
+                      {from} – {to}
+                    </div>
                   </div>
                 );
               })}
@@ -651,7 +714,7 @@ export default function Board({ state, setState, ms }: Props) {
                                 onDragOver={(e) => e.preventDefault()}
                                 onDrop={(e) => onDropOnLane(e, { rowId, weekRow, col })}
                               >
-                                {/* Tages-Spuren: nur in Lane 0, damit es übersichtlich bleibt */}
+                                {/* Tages-Spuren: nur in Lane 0 */}
                                 {lane === 0 && entries.length > 0 ? (
                                   <div className="absolute left-1 right-1 bottom-1 flex flex-col gap-1 pointer-events-none">
                                     {shown.map((e, i) => {
@@ -669,9 +732,7 @@ export default function Board({ state, setState, ms }: Props) {
                                         </div>
                                       );
                                     })}
-                                    {rest > 0 ? (
-                                      <div className="text-[9px] text-neutral-400">+{rest}</div>
-                                    ) : null}
+                                    {rest > 0 ? <div className="text-[9px] text-neutral-400">+{rest}</div> : null}
                                   </div>
                                 ) : null}
                               </div>
@@ -698,8 +759,8 @@ export default function Board({ state, setState, ms }: Props) {
                       const planMin = Math.max(0, p.planMinuten);
                       const first = projTotals.firstIso.get(p.projectId) ?? null;
 
-                      // Fortschrittsstart im Block: Offset ab erster Buchung relativ zur Planung
-                      const plannedStartIso = plannedStartIsoByProject.get(String(p.projectId)) ?? isoDate(dateForCol(0, 0));
+                      const plannedStartIso =
+                        plannedStartIsoByProject.get(String(p.projectId)) ?? isoDate(dateForCol(0, 0));
                       const startOffsetDays = first ? diffDaysIso(plannedStartIso, first) : 0;
 
                       const totalSpanCols =
@@ -736,9 +797,11 @@ export default function Board({ state, setState, ms }: Props) {
                       const overLeftPx = (partOverStart - partStart) * CELL_W;
                       const overWidthPx = partOverLen * CELL_W;
 
-                      const showAnyProgress = totalMin > 0 && first != null && (partPlannedLen > 0 || partOverLen > 0);
+                      const showAnyProgress =
+                        totalMin > 0 && first != null && (partPlannedLen > 0 || partOverLen > 0);
 
-                      const area = projTotals.areaMin.get(p.projectId) ?? { maschine: 0, bank: 0, lack: 0, montage: 0 };
+                      const area =
+                        projTotals.areaMin.get(p.projectId) ?? { maschine: 0, bank: 0, lack: 0, montage: 0 };
                       const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
                       const areaShares: Array<{ b: Bereich; share: number }> = [
                         { b: "maschine", share: area.maschine / areaTotal },
@@ -757,8 +820,8 @@ export default function Board({ state, setState, ms }: Props) {
                             isDragging
                               ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
                               : isRunningProject
-                                ? "border-blue-500 bg-neutral-900 text-neutral-100"
-                                : "border-orange-500/80 bg-neutral-900 text-neutral-100"
+                              ? "border-blue-500 bg-neutral-900 text-neutral-100"
+                              : "border-orange-500/80 bg-neutral-900 text-neutral-100"
                           }`}
                           style={{ top: blockTop, left: blockLeft, width: blockW, height: blockH }}
                           title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}`}
@@ -777,10 +840,7 @@ export default function Board({ state, setState, ms }: Props) {
                           {/* Fortschritt */}
                           {showAnyProgress ? (
                             <>
-                              <div
-                                className="absolute top-0 bottom-0"
-                                style={{ left: plannedLeftPx, width: plannedWidthPx }}
-                              >
+                              <div className="absolute top-0 bottom-0" style={{ left: plannedLeftPx, width: plannedWidthPx }}>
                                 <div className="h-full w-full flex">
                                   {areaShares.length > 0 ? (
                                     areaShares.map((x, idx) => (
@@ -840,7 +900,56 @@ export default function Board({ state, setState, ms }: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 relative">
+      {/* DEBUG PANEL – AUTO */}
+      <div className="fixed top-4 left-4 z-[9999] bg-white text-black text-xs rounded-lg border shadow-lg p-3 w-[380px] max-h-[80vh] overflow-auto">
+        <div className="font-bold mb-2">Board Debug (AUTO)</div>
+
+        <div>
+          <b>Board Range:</b> {isoDate(topWeeks[0])} … {isoDate(addDays(bottomWeeks[3], 5))}
+        </div>
+
+        <div className="mt-2">
+          <b>buchungen total:</b> {debug.totalAll}
+        </div>
+        <div>
+          <b>arbeits-buchungen:</b> {debug.totalArbeits}
+        </div>
+
+        <div className="mt-2">
+          <b>Last Arbeit:</b>{" "}
+          {debug.last
+            ? `${debug.lastDatum} | m=${debug.lastMitarbeiterId} | p=${debug.lastProjektId} | ${minutesToHM(debug.lastMinuten)}`
+            : "—"}
+        </div>
+
+        <div className="mt-2">
+          <b>Auto Key:</b> {debug.key || "—"}
+        </div>
+        <div>
+          <b>Auto Hits:</b> {debug.hits}
+        </div>
+        <div>
+          <b>colForIso(top/bottom):</b> {String(debug.colTop)} / {String(debug.colBottom)}
+        </div>
+
+        <div className="mt-3 font-semibold">Letzte 12 Arbeitsbuchungen</div>
+        <div className="mt-1 space-y-1">
+          {debug.last12.length === 0 ? (
+            <div className="text-neutral-600">Keine Arbeitsbuchungen in state.buchungen.</div>
+          ) : (
+            debug.last12.map((x, i) => (
+              <div key={i} className="border rounded px-2 py-1">
+                <div>
+                  <b>{x.datum}</b> | m={x.mitarbeiterId} | p={x.projektId}
+                </div>
+                <div className="text-neutral-700">{minutesToHM(x.minuten)}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {renderSection(0, topWeeks, scrollTopRef)}
       {renderSection(1, bottomWeeks, scrollBottomRef)}
       <div className="text-xs text-neutral-500">

@@ -54,6 +54,66 @@ function todayIso(): string {
   return `${y}-${m}-${day}`;
 }
 
+function isoFromDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Normalisiert "datum" zuverlässig auf "YYYY-MM-DD".
+ * Unterstützt:
+ * - "YYYY-MM-DD"
+ * - ISO-DateTime "YYYY-MM-DDTHH:mm..."
+ * - number (Timestamp)
+ * - Date
+ * - Objektvarianten aus Altständen (z.B. {iso}, {date}, {y,m,d}, {year,month,day})
+ */
+function normalizeIsoDatum(v: unknown): string {
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return "";
+    // ISO datetime -> nur Datum
+    if (s.length >= 10) return s.slice(0, 10);
+    return s;
+  }
+
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+    const d = new Date(v);
+    if (Number.isFinite(d.getTime())) return isoFromDate(d);
+    return "";
+  }
+
+  if (v instanceof Date) {
+    if (Number.isFinite(v.getTime())) return isoFromDate(v);
+    return "";
+  }
+
+  if (v && typeof v === "object") {
+    const o: any = v;
+
+    // häufige Kandidaten
+    const cands = [o.iso, o.datum, o.date, o.value];
+    for (const c of cands) {
+      const s = normalizeIsoDatum(c);
+      if (s) return s;
+    }
+
+    // y/m/d oder year/month/day
+    const y = num(o.y ?? o.year);
+    const m = num(o.m ?? o.month);
+    const d = num(o.d ?? o.day);
+    if (y >= 1970 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      const mm = String(m).padStart(2, "0");
+      const dd = String(d).padStart(2, "0");
+      return `${String(Math.trunc(y))}-${mm}-${dd}`;
+    }
+  }
+
+  return "";
+}
+
 function normalizeArbeitsarten(p: any): any {
   const aa = p?.arbeitsarten;
   if (!aa || typeof aa !== "object") return undefined;
@@ -71,6 +131,45 @@ function normalizeArbeitsarten(p: any): any {
   });
 
   return out;
+}
+
+function normalizeBuchung(b: any): Buchung | null {
+  if (!b || typeof b !== "object") return null;
+
+  const art = str(b.art);
+  const id = str(b.id, uid());
+  const mitarbeiterId = str(b.mitarbeiterId);
+  const projektId = b.projektId != null ? str(b.projektId) : undefined;
+
+  const datum = normalizeIsoDatum(b.datum);
+  // Wenn datum komplett kaputt ist: nicht crashen, aber auch nicht leer lassen
+  const fixedDatum = datum || todayIso();
+
+  const fixed: any = {
+    ...b,
+    id,
+    mitarbeiterId,
+    datum: fixedDatum,
+    art,
+  };
+
+  // Felder, die bei "arbeit" relevant sind
+  if (art === "arbeit") {
+    fixed.projektId = str(projektId, "");
+    fixed.bereich = b.bereich as Bereich;
+    fixed.startTs = num(b.startTs) || fixed.startTs;
+    fixed.endeTs = num(b.endeTs) || fixed.endeTs;
+
+    // Minuten robust: akzeptiere minuten, sonst stunden*60, sonst 0
+    const min = num(b.minuten) || num(b.stunden) * 60 || 0;
+    fixed.minuten = Math.max(0, Math.round(min));
+  } else {
+    // Status-Einträge können minuten null haben
+    if (b.minuten === null) fixed.minuten = null;
+    else fixed.minuten = b.minuten != null ? Math.max(0, num(b.minuten) || 0) : fixed.minuten;
+  }
+
+  return fixed as Buchung;
 }
 
 export function loadState(): State {
@@ -106,7 +205,11 @@ export function loadState(): State {
         return fixed as Projekt;
       });
 
-      const buchungen: Buchung[] = Array.isArray(parsed.buchungen) ? (parsed.buchungen as any) : [];
+      // ✅ WICHTIG: Buchungen normalisieren (Datum/IDs/Minuten)
+      const buchungenRaw: any[] = Array.isArray(parsed.buchungen) ? (parsed.buchungen as any[]) : [];
+      const buchungen: Buchung[] = buchungenRaw
+        .map(normalizeBuchung)
+        .filter((x): x is Buchung => !!x);
 
       let running: RunningTimer | null = (parsed.running as any) ?? null;
       if (running) {
@@ -123,19 +226,21 @@ export function loadState(): State {
         else running = fixed;
       }
 
-      return {
+      const out: State = {
         projects:
           projects.length > 0
             ? projects
-            : ([
-                { id: "p1", name: "Allgemein", active: true, kalkStunden: 0 },
-                { id: "p2", name: "Projekt A", active: true, kalkStunden: 10 },
-                { id: "p3", name: "Projekt B", active: true, kalkStunden: 20 },
-              ] as any),
+            : ([{ id: "p1", name: "Allgemein", active: true, kalkStunden: 0 }] as any),
         buchungen,
         running,
         boardLayout: (parsed as any).boardLayout ?? undefined,
       };
+
+      // Optional aber hilfreich: reparierte Daten direkt zurückschreiben,
+      // damit ab jetzt alles sauber ist.
+      saveState(out);
+
+      return out;
     }
   } catch (err) {
     console.warn("loadState failed", err);
@@ -192,8 +297,14 @@ export function stopTimer(s: State, datumOverride?: string) {
   if (!s.running) return;
 
   const endTs = Date.now();
-  const minutes = Math.max(0, Math.round((endTs - s.running.startTs) / 60000));
-  const datum = str(datumOverride ?? s.running.datum, todayIso());
+  const rawMinutes = Math.round((endTs - s.running.startTs) / 60000);
+
+  // 🔒 Narrensicher: mindestens 1 Minute bei jeder Arbeit
+  const minutes = Math.max(1, rawMinutes);
+
+  // Variante A: Datum = Tag des Stop-Moments (heute),
+  // außer bewusstes Nachtragen per Override
+  const datum = str(datumOverride ?? todayIso(), todayIso());
 
   s.buchungen.push({
     id: uid(),
@@ -211,6 +322,7 @@ export function stopTimer(s: State, datumOverride?: string) {
   s.running = null;
   saveState(s);
 }
+
 
 // --- Status -----------------------------------------------------------------
 
