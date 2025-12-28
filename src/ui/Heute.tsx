@@ -268,19 +268,50 @@ function clearDayStatus() {
 }
 
 function updateMinutes(buchungId: string, minutes: number) {
+  const m = Math.max(0, Math.round(Number(minutes) || 0));
+
   setState((s) => {
     try {
-      const next = updateArbeitsBuchung(s as any, {
-        id: buchungId,
-        minuten: minutes,
-      });
-      return next ?? s;
+      // Versuch 1: timeStore-Funktion (falls sie passt)
+      const fn: any = updateArbeitsBuchung as any;
+      let next: any = undefined;
+
+      if (typeof fn === "function") {
+        // Variante A: (state, payload)
+        if (fn.length >= 2) next = fn(s, { id: buchungId, minuten: m });
+        // Variante B: (state) => ...
+        else if (fn.length === 1) next = fn(s);
+      }
+
+      const out = next ?? s;
+
+      // Prüfen, ob es wirklich geändert wurde
+      const arr = Array.isArray((out as any)?.buchungen) ? (out as any).buchungen : [];
+      const found = arr.find((b: any) => String(b?.id) === String(buchungId));
+      if (found && Number(found.minuten) === m) return out;
+
+      // Fallback: direkt im State anpassen
+      const cloned: any = structuredClone(out);
+      if (!Array.isArray(cloned.buchungen)) cloned.buchungen = [];
+
+      const idx = cloned.buchungen.findIndex((b: any) => String(b?.id) === String(buchungId));
+      if (idx >= 0) {
+        cloned.buchungen[idx] = { ...cloned.buchungen[idx], minuten: m };
+      }
+      return cloned;
     } catch (err) {
-      console.error("updateArbeitsBuchung crashed:", err);
-      return s;
+      console.error("updateMinutes failed:", err);
+
+      // Harte Fallback-Variante: direkt im bestehenden State ändern
+      const cloned: any = structuredClone(s);
+      if (!Array.isArray(cloned.buchungen)) cloned.buchungen = [];
+      const idx = cloned.buchungen.findIndex((b: any) => String(b?.id) === String(buchungId));
+      if (idx >= 0) cloned.buchungen[idx] = { ...cloned.buchungen[idx], minuten: m };
+      return cloned;
     }
   });
 }
+
 
 function removeBuchung(buchungId: string) {
   setState((s) => {
@@ -442,7 +473,8 @@ function removeBuchung(buchungId: string) {
                           type="number"
                           className="w-24 rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"
                           value={Number(b.minuten ?? 0)}
-                          onChange={(e) => updateMinutes(String(b.id), Number(e.target.value))}
+                          onChange={(e) => updateMinutes(String(b.id), e.target.valueAsNumber)}
+
                           min={0}
                           step={15}
                         />
