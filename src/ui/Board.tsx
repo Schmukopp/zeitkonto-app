@@ -73,9 +73,8 @@ function diffDaysIso(fromIso: string, toIso: string) {
 }
 
 /**
- * Regel:
- * - Hauptstrahl (Zeile) = operativ verantwortlich (zugeordnetAnId)
- * - Farbe = planender Meister
+ * Farbe kommt vom planenden Meister.
+ * Operativ (Zeile) ist planbar per Drag&Drop -> layout.rowId überschreibt Default.
  */
 function pickPlannerMeisterId(p: any): string | null {
   const cands = [p?.meisterId, p?.hauptdarstellerId, p?.hauptverantwortlicherId, p?.verantwortlicherId, p?.ownerId];
@@ -84,7 +83,7 @@ function pickPlannerMeisterId(p: any): string | null {
   }
   return null;
 }
-function pickOperativId(p: any): string | null {
+function pickOperativIdDefault(p: any): string | null {
   const cands = [p?.zugeordnetAnId, p?.assignedToId];
   for (const c of cands) {
     if (typeof c === "string" && c.trim()) return c;
@@ -182,22 +181,20 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
   return out;
 }
 
-type LayoutPos = { startCol: number }; // ✅ Zeile nicht planbar
+// ✅ Layout ist jetzt: rowId + startCol (beides planbar)
+type LayoutPos = { rowId: string; startCol: number };
+
 type Block = {
   id: string;
   name: string;
 
-  // ✅ immer operativ
-  rowId: string;
+  rowId: string; // operativ geplant/überschrieben
+  plannedStartColTop: number;
 
-  // ✅ Planung per DnD
-  plannedStartColTop: number; // 0..23
-
-  spanCols: number; // 1..48
+  spanCols: number;
   meisterId: string | null;
-  operativId: string | null;
-
-  planMinuten: number; // kalkStunden*60
+  operativIdDefault: string | null; // nur Info
+  planMinuten: number;
 };
 
 type BlockPart = {
@@ -209,7 +206,6 @@ type BlockPart = {
   startCol: number;
   span: number;
   meisterId: string | null;
-  operativId: string | null;
   planMinuten: number;
   relStart: number;
 };
@@ -272,26 +268,34 @@ export default function Board({ state, setState, ms }: Props) {
     return meisterColorClass(meisterId);
   }
 
-  // ✅ alle aktiven Projekte im Board
   const activeProjects = useMemo(() => (projects ?? []).filter((p: any) => !!p?.active), [projects]);
 
-  // Layout: nur startCol
+  // ✅ layout aus state (rowId+startCol)
   const layout: Record<string, LayoutPos> = (state as any)?.boardLayout ?? {};
 
-  // Initiale Verteilung, falls kein Layout
+  // initiale Fallback-Positionen
   const autoFallback: Record<string, LayoutPos> = useMemo(() => {
     const out: Record<string, LayoutPos> = {};
     let cursor = 0;
+    let rr = 0;
+
     for (const p of activeProjects) {
       const pid = String(p.id);
       if (layout[pid]) continue;
-      out[pid] = { startCol: clamp(cursor, 0, COLS - 1) };
+
+      const defaultOperativ = pickOperativIdDefault(p);
+      const rowId =
+        defaultOperativ ? String(defaultOperativ) : String(mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ?? "m1");
+      rr++;
+
+      out[pid] = { rowId, startCol: clamp(cursor, 0, COLS - 1) };
       cursor = clamp(cursor + 3, 0, COLS - 1);
     }
-    return out;
-  }, [activeProjects, layout]);
 
-  // BoardIds initial befüllen (falls leer)
+    return out;
+  }, [activeProjects, layout, mitarbeiter]);
+
+  // BoardIds initial befüllen
   const boardIds = useMemo(() => loadBoardIds(), []);
   useEffect(() => {
     if (boardIds.length > 0) return;
@@ -300,7 +304,7 @@ export default function Board({ state, setState, ms }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjects]);
 
-  // ✅ Blocks: Zeile = operativ; Position = geplantes startCol
+  // ✅ Blocks: rowId aus layout, sonst default operativ
   const blocks: Block[] = useMemo(() => {
     if (mitarbeiter.length === 0) return [];
 
@@ -308,11 +312,18 @@ export default function Board({ state, setState, ms }: Props) {
       const pid = String(p.id);
 
       const meisterId = pickPlannerMeisterId(p);
-      const operativId = pickOperativId(p);
-      const rowId = operativId ? String(operativId) : String(mitarbeiter[0]?.id ?? "m1");
+      const operativIdDefault = pickOperativIdDefault(p);
 
       const pos = layout[pid] ?? autoFallback[pid];
+
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
+
+      const rowId =
+        pos?.rowId
+          ? String(pos.rowId)
+          : operativIdDefault
+            ? String(operativIdDefault)
+            : String(mitarbeiter[0]?.id ?? "m1");
 
       const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
       const hours = safeNumber(p.kalkStunden);
@@ -326,7 +337,7 @@ export default function Board({ state, setState, ms }: Props) {
         plannedStartColTop,
         spanCols,
         meisterId,
-        operativId: operativId ? String(operativId) : null,
+        operativIdDefault: operativIdDefault ? String(operativIdDefault) : null,
         planMinuten,
       };
     });
@@ -349,7 +360,6 @@ export default function Board({ state, setState, ms }: Props) {
         startCol: topStart,
         span: topSpan,
         meisterId: b.meisterId,
-        operativId: b.operativId,
         planMinuten: b.planMinuten,
         relStart: 0,
       });
@@ -366,7 +376,6 @@ export default function Board({ state, setState, ms }: Props) {
         startCol: 0,
         span: Math.min(rest, COLS),
         meisterId: b.meisterId,
-        operativId: b.operativId,
         planMinuten: b.planMinuten,
         relStart: topSpan,
       });
@@ -377,7 +386,7 @@ export default function Board({ state, setState, ms }: Props) {
 
   const blockParts: BlockPart[] = useMemo(() => blocks.flatMap(splitBlock), [blocks]);
 
-  // Gesamtspan pro Projekt (für Progress-Skalierung)
+  // Gesamtspan pro Projekt
   const projectTotalSpanCols = useMemo(() => {
     const m = new Map<string, number>();
     for (const p of blockParts) {
@@ -388,7 +397,7 @@ export default function Board({ state, setState, ms }: Props) {
     return m;
   }, [blockParts]);
 
-  // geplantes Startdatum (ISO) pro Projekt: aus geplanter Startzelle
+  // geplantes Startdatum pro Projekt (aus geplanter Startzelle)
   const plannedStartIsoByProject = useMemo(() => {
     const m = new Map<string, string>();
     for (const b of blocks) {
@@ -399,14 +408,14 @@ export default function Board({ state, setState, ms }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, topWeeks.join?.(",")]);
 
-  // Drag & Drop: nur Planung (startCol), Zeile bleibt operativ fix
+  // Drag & Drop: rowId + startCol setzen
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  function saveLayout(projectId: string, startCol: number) {
+  function saveLayout(projectId: string, nextPos: LayoutPos) {
     setState((s) => {
       const next = structuredClone(s) as any;
       if (!next.boardLayout) next.boardLayout = {};
-      next.boardLayout[projectId] = { startCol };
+      next.boardLayout[projectId] = nextPos;
       return next;
     });
   }
@@ -420,15 +429,22 @@ export default function Board({ state, setState, ms }: Props) {
     setDraggingId(null);
   }
 
-  function onDropOnLane(e: React.DragEvent, target: { col: number; weekRow: 0 | 1 }) {
+  function onDropOnLane(
+    e: React.DragEvent,
+    target: { rowId: string; weekRow: 0 | 1; lane: number; col: number }
+  ) {
     e.preventDefault();
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
 
-    // Planung nur oben (unten ist Fortsetzung)
+    // Planung bleibt oben verankert (unten nur Fortsetzung)
     if (target.weekRow !== 0) return;
 
-    saveLayout(projectId, clamp(target.col, 0, COLS - 1));
+    saveLayout(projectId, {
+      rowId: String(target.rowId),
+      startCol: clamp(target.col, 0, COLS - 1),
+    });
+
     setDraggingId(null);
   }
 
@@ -474,7 +490,7 @@ export default function Board({ state, setState, ms }: Props) {
           <div className="min-w-max">
             {/* KW */}
             <div className="flex">
-              <div className="shrink-0 border-r border-neutral-800" style={{ width: 240, height: 32 }} />
+              <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 32 }} />
               {weeks4.map((wStart, idx) => {
                 const isCurrent = weekRow === 0 && idx === 1;
                 return (
@@ -483,7 +499,7 @@ export default function Board({ state, setState, ms }: Props) {
                     className={`flex items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
                       isCurrent ? "bg-orange-500 text-neutral-950" : "bg-neutral-900 text-neutral-300"
                     }`}
-                    style={{ width: 6 * 80, height: 32 }}
+                    style={{ width: 6 * CELL_W, height: 32 }}
                   >
                     KW {isoWeekNumber(wStart)}
                   </div>
@@ -495,12 +511,12 @@ export default function Board({ state, setState, ms }: Props) {
             <div className="flex border-b border-neutral-800">
               <div
                 className="shrink-0 border-r border-neutral-800 px-2 py-2 text-xs text-neutral-400"
-                style={{ width: 240 }}
+                style={{ width: NAME_COL_W }}
               >
                 Mitarbeiter
               </div>
 
-              {Array.from({ length: 24 }).map((_, i) => {
+              {Array.from({ length: COLS }).map((_, i) => {
                 const label = DAY_LABELS[i % 6];
                 const isWeekBoundary = i % 6 === 0;
                 const isActive = activeCol === i;
@@ -511,7 +527,7 @@ export default function Board({ state, setState, ms }: Props) {
                     className={`text-[11px] text-center border-r border-neutral-800 py-2 ${
                       isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
                     } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
-                    style={{ width: 80 }}
+                    style={{ width: CELL_W }}
                   >
                     {label}
                   </div>
@@ -526,17 +542,17 @@ export default function Board({ state, setState, ms }: Props) {
                 <div key={m.id} className="flex border-b border-neutral-800 last:border-b-0">
                   <div
                     className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-sm text-neutral-100"
-                    style={{ width: 240, height: 3 * 32 }}
+                    style={{ width: NAME_COL_W, height: LANES * LANE_H }}
                   >
                     <div className="truncate">{m.name}</div>
                   </div>
 
-                  <div className="relative" style={{ width: 24 * 80, height: 3 * 32 }}>
+                  <div className="relative" style={{ width: COLS * CELL_W, height: LANES * LANE_H }}>
                     {/* Raster + Drop + Fremdarbeit */}
                     <div className="absolute inset-0">
-                      {Array.from({ length: 3 }).map((_, lane) => (
-                        <div key={lane} className="flex" style={{ height: 32 }}>
-                          {Array.from({ length: 24 }).map((_, col) => {
+                      {Array.from({ length: LANES }).map((_, lane) => (
+                        <div key={lane} className="flex" style={{ height: LANE_H }}>
+                          {Array.from({ length: COLS }).map((_, col) => {
                             const isWeekBoundary = col % 6 === 0;
                             const isActive = activeCol === col;
 
@@ -546,21 +562,29 @@ export default function Board({ state, setState, ms }: Props) {
                                 className={`relative border-r border-neutral-800 ${
                                   isWeekBoundary ? "bg-neutral-900/35" : "bg-neutral-950"
                                 } ${isActive ? "bg-blue-500/5" : ""}`}
-                                style={{ width: 80, height: 32 }}
+                                style={{ width: CELL_W, height: LANE_H }}
                                 onDragOver={(e) => e.preventDefault()}
-                                onDrop={(e) => onDropOnLane(e, { col, weekRow })}
+                                onDrop={(e) =>
+                                  onDropOnLane(e, {
+                                    rowId: String(m.id),
+                                    weekRow,
+                                    lane,
+                                    col,
+                                  })
+                                }
                               >
+                                {/* Fremdarbeit-Spuren */}
                                 {lane === 0 ? (() => {
                                   const iso = isoDate(dateForCol(weekRow, col));
                                   const key = `${String(m.id)}__${iso}`;
                                   const entries = empDayProjIdx.get(key) ?? [];
                                   if (entries.length === 0) return null;
 
-                                  // nur Fremdarbeit (nicht operativ eigenes Projekt)
+                                  // Nur anzeigen, wenn Mitarbeiter NICHT als geplante Zeile für dieses Projekt vorgesehen ist
                                   const filtered = entries.filter((e) => {
-                                    const proj = projectById.get(String(e.projektId));
-                                    const operativId = pickOperativId(proj);
-                                    return String(operativId ?? "") !== String(m.id);
+                                    const pos = (layout as any)?.[String(e.projektId)];
+                                    const plannedRowId = pos?.rowId ? String(pos.rowId) : String(pickOperativIdDefault(projectById.get(String(e.projektId))) ?? "");
+                                    return plannedRowId !== String(m.id);
                                   });
                                   if (filtered.length === 0) return null;
 
@@ -576,7 +600,11 @@ export default function Board({ state, setState, ms }: Props) {
                                         const pct = clamp((e.minuten / denom) * 100, 2, 100);
                                         const colorClass = meisterColorForProject(e.projektId);
                                         return (
-                                          <div key={`${e.projektId}_${i}`} className="h-1.5 rounded bg-neutral-800 overflow-hidden">
+                                          <div
+                                            key={`${e.projektId}_${i}`}
+                                            className="h-1.5 rounded bg-neutral-800 overflow-hidden"
+                                            title={`${String(projectById.get(String(e.projektId))?.name ?? e.projektId)} · ${minutesToHM(e.minuten)}`}
+                                          >
                                             <div className={`h-full ${colorClass}`} style={{ width: `${pct}%` }} />
                                           </div>
                                         );
@@ -598,10 +626,10 @@ export default function Board({ state, setState, ms }: Props) {
                       const isDragging = draggingId === p.projectId;
                       const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
 
-                      const blockLeft = p.startCol * 80 + 2;
-                      const blockTop = (partIdx % 3) * 32 + 2;
-                      const blockW = p.span * 80 - 4;
-                      const blockH = 32 - 4;
+                      const blockLeft = p.startCol * CELL_W + 2;
+                      const blockTop = (partIdx % LANES) * LANE_H + 2;
+                      const blockW = p.span * CELL_W - 4;
+                      const blockH = LANE_H - 4;
 
                       const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
                       const planMin = Math.max(0, p.planMinuten);
@@ -609,7 +637,7 @@ export default function Board({ state, setState, ms }: Props) {
 
                       const totalSpanCols = projectTotalSpanCols.get(String(p.projectId)) ?? Math.max(1, p.relStart + p.span);
 
-                      // ✅ Fortschritt startet ab erster Buchung IM Block (Offset), Block bleibt geplant.
+                      // Fortschritt startet IM Block ab erster Buchung (Offset relativ zur Planung)
                       const plannedStartIso = plannedStartIsoByProject.get(String(p.projectId)) ?? isoDate(dateForCol(0, 0));
                       const startOffsetDays = first ? diffDaysIso(plannedStartIso, first) : 0;
                       const progressStartCol = clamp(startOffsetDays, 0, totalSpanCols);
@@ -645,11 +673,11 @@ export default function Board({ state, setState, ms }: Props) {
                         { b: "montage", share: area.montage / areaTotal },
                       ].filter((x) => x.share > 0.0001);
 
-                      const plannedLeftPx = (partPlannedStart - partStart) * 80;
-                      const plannedWidthPx = partPlannedLen * 80;
+                      const plannedLeftPx = (partPlannedStart - partStart) * CELL_W;
+                      const plannedWidthPx = partPlannedLen * CELL_W;
 
-                      const overLeftPx = (partOverStart - partStart) * 80;
-                      const overWidthPx = partOverLen * 80;
+                      const overLeftPx = (partOverStart - partStart) * CELL_W;
+                      const overWidthPx = partOverLen * CELL_W;
 
                       const showAnyProgress = totalMin > 0 && first != null && (partPlannedLen > 0 || partOverLen > 0);
 
@@ -671,7 +699,7 @@ export default function Board({ state, setState, ms }: Props) {
                           {/* Raster im Block */}
                           <div className="absolute inset-0 flex">
                             {Array.from({ length: p.span }).map((_, i) => (
-                              <div key={i} className="h-full border-r border-neutral-800/60 bg-neutral-950" style={{ width: 80 }} />
+                              <div key={i} className="h-full border-r border-neutral-800/60 bg-neutral-950" style={{ width: CELL_W }} />
                             ))}
                           </div>
 
@@ -682,7 +710,19 @@ export default function Board({ state, setState, ms }: Props) {
                                 <div className="h-full w-full flex">
                                   {areaShares.length > 0 ? (
                                     areaShares.map((x, idx) => (
-                                      <div key={`${x.b}_${idx}`} className={`h-full ${bereichColorClass(x.b)}`} style={{ width: `${x.share * 100}%` }} />
+                                      <div
+                                        key={`${x.b}_${idx}`}
+                                        className={`h-full ${
+                                          x.b === "maschine"
+                                            ? "bg-cyan-500"
+                                            : x.b === "bank"
+                                              ? "bg-blue-500"
+                                              : x.b === "lack"
+                                                ? "bg-fuchsia-500"
+                                                : "bg-emerald-500"
+                                        }`}
+                                        style={{ width: `${x.share * 100}%` }}
+                                      />
                                     ))
                                   ) : (
                                     <div className="h-full w-full bg-blue-600" />
@@ -734,7 +774,7 @@ export default function Board({ state, setState, ms }: Props) {
       {renderSection(0, topWeeks, scrollTopRef)}
       {renderSection(1, bottomWeeks, scrollBottomRef)}
       <div className="text-xs text-neutral-500">
-        Plan ist nur Drag&Drop (ein Block). Fortschritt startet im Block ab erster Buchung. Hauptzeile bleibt operativ.
+        Drag&Drop setzt jetzt Start + operativen Mitarbeiter (Zeile). Farbe bleibt vom Meister. Fortschritt startet ab erster Buchung im Block.
       </div>
     </div>
   );
