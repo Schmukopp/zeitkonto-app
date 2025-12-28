@@ -127,34 +127,114 @@ export default function Heute({
 
   setState((s) => {
     try {
-      const next = startTimer(s as any, {
-        mitarbeiterId,
-        projektId: selectedProjektId,
-        bereich: selectedBereich,
-        datum: selectedIso,
-      });
-      return next ?? s;
+      const fn: any = startTimer as any;
+
+      // Adaptiv: je nach Signatur aufrufen
+      let next: any;
+      if (typeof fn === "function") {
+        if (fn.length >= 2) {
+          // unsere "objekt"-Variante
+          next = fn(s, {
+            mitarbeiterId,
+            projektId: selectedProjektId,
+            bereich: selectedBereich,
+            datum: selectedIso,
+          });
+        } else {
+          // alte Varianten: (s) => ...
+          next = fn(s);
+        }
+      }
+
+      // Fallback: wenn nichts zurückkommt oder sich nichts ändert -> running minimal setzen
+      const out = next ?? s;
+      const hasRunning = !!(out as any).running;
+
+      if (!hasRunning) {
+        const cloned: any = structuredClone(out);
+        cloned.running = {
+          mitarbeiterId,
+          projektId: selectedProjektId,
+          bereich: selectedBereich,
+          datum: selectedIso,
+          startedAt: Date.now(),
+        };
+        return cloned;
+      }
+
+      return out;
     } catch (err) {
-      console.error("startTimer crashed:", err);
+      console.error("handleStart failed:", err);
       return s;
     }
   });
 }
 
+
 function handleStop() {
   setState((s) => {
     try {
-      const next = stopTimer(s as any, {
-        mitarbeiterId,
-        datum: selectedIso,
-      });
-      return next ?? s;
+      const before: any = s as any;
+      const beforeRunning = before?.running;
+
+      const fn: any = stopTimer as any;
+
+      // Versuch 1: stopTimer normal (adaptiv)
+      let next: any;
+      if (typeof fn === "function") {
+        if (fn.length >= 2) {
+          next = fn(s, { mitarbeiterId, datum: selectedIso });
+        } else if (fn.length === 1) {
+          next = fn(s);
+        } else {
+          next = fn(s);
+        }
+      }
+
+      const out = next ?? s;
+
+      // Prüfen, ob stopTimer wirklich eine Buchung erzeugt hat
+      const beforeLen = Array.isArray(before?.buchungen) ? before.buchungen.length : 0;
+      const afterLen = Array.isArray((out as any)?.buchungen) ? (out as any).buchungen.length : 0;
+
+      if (afterLen > beforeLen) return out;
+
+      // Fallback: Wenn stopTimer NICHT gebucht hat, dann buchen wir hier sauber nach.
+      if (beforeRunning && String(beforeRunning.mitarbeiterId) === String(mitarbeiterId)) {
+        const startedAt = Number(beforeRunning.startedAt ?? beforeRunning.startMs ?? beforeRunning.start ?? Date.now());
+        const minutes = Math.max(1, Math.round((Date.now() - startedAt) / 60000));
+
+        const datum = String(beforeRunning.datum ?? selectedIso);
+        const projektId = String(beforeRunning.projektId ?? selectedProjektId);
+        const bereich = String(beforeRunning.bereich ?? selectedBereich);
+
+        const cloned: any = structuredClone(out);
+        if (!Array.isArray(cloned.buchungen)) cloned.buchungen = [];
+
+        cloned.buchungen.push({
+          id: String(Date.now()),
+          art: "arbeit",
+          mitarbeiterId,
+          projektId,
+          bereich,
+          datum,
+          minuten: minutes,
+        });
+
+        // running beenden
+        cloned.running = null;
+
+        return cloned;
+      }
+
+      return out;
     } catch (err) {
-      console.error("stopTimer crashed:", err);
+      console.error("handleStop failed:", err);
       return s;
     }
   });
 }
+
 
 function setStatus(status: any) {
   setState((s) => {
