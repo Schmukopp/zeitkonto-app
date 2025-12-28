@@ -19,6 +19,10 @@ type Props = {
   mitarbeiterId: string;
   mitarbeiterName: string;
 
+  // optional: Mitarbeiter im Heute-Tab umschalten (Test/Handy)
+  mitarbeiterOptions?: Array<{ id: string; name: string }>;
+  onChangeMitarbeiterId?: (id: string) => void;
+
   getTagesSollMinuten: (isoDate: string) => number;
 
   // kommt aus App.tsx (heute)
@@ -58,64 +62,42 @@ export default function Heute({
   setState,
   mitarbeiterId,
   mitarbeiterName,
+  mitarbeiterOptions,
+  onChangeMitarbeiterId,
   getTagesSollMinuten,
-  isoDate: todayIsoFromApp,
+  isoDate,
 }: Props) {
-  // Mo–Sa der aktuellen Woche (wie Board)
+  const btn =
+    "rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:border-orange-500 hover:text-orange-300";
+  const btnActive =
+    "rounded-xl border border-orange-500 bg-orange-500 px-3 py-2 text-sm font-medium text-neutral-950";
+  const btnDanger =
+    "rounded-xl border border-red-700 bg-neutral-900 px-3 py-2 text-sm text-red-200 hover:border-red-500 hover:text-red-100";
+
+  const box = "rounded-2xl border border-neutral-800 bg-neutral-950 p-4";
+
+  // Tagwahl Mo–Sa
   const dayChoices: DayChoice[] = useMemo(() => {
-    const base = startOfIsoWeek(new Date());
+    const base = startOfIsoWeek(parseIso(isoDate));
     const labels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"];
-    return labels.map((label, i) => ({
-      label,
-      iso: toIsoDate(addDays(base, i)),
-    }));
-  }, []);
+    return labels.map((label, i) => ({ label, iso: toIsoDate(addDays(base, i)) }));
+  }, [isoDate]);
 
-  // Default: wenn heute Sonntag => Montag (damit du sofort testen kannst)
-  const initialIso = useMemo(() => {
-    const d = parseIso(todayIsoFromApp);
-    if (d.getDay() === 0) return toIsoDate(startOfIsoWeek(d));
-    return todayIsoFromApp;
-  }, [todayIsoFromApp]);
+  const [selectedIso, setSelectedIso] = useState<string>(isoDate);
 
-  const [selectedIso, setSelectedIso] = useState<string>(initialIso);
-
-  // Projekte (aktiv)
-  const activeProjects = useMemo(
-    () => (state.projects ?? []).filter((p: any) => p?.active !== false),
-    [state.projects]
-  );
-
-  // Projekt/Bereich – schnell
-  const [projektId, setProjektId] = useState<string>(() => String(activeProjects[0]?.id ?? "p1"));
-  const [bereich, setBereich] = useState<Bereich>("bank");
-  const [note, setNote] = useState<string>("");
-
-  // Wenn Projekte sich ändern (Admin), Auswahl gültig halten
   useEffect(() => {
-    if (activeProjects.length === 0) return;
-    const exists = activeProjects.some((p: any) => String(p.id) === String(projektId));
-    if (!exists) setProjektId(String(activeProjects[0].id));
-  }, [activeProjects, projektId]);
+    // wenn App den Tag wechselt (isoDate), übernehmen
+    setSelectedIso(isoDate);
+  }, [isoDate]);
 
-  const sollMinuten = getTagesSollMinuten(selectedIso);
+  const [selectedProjektId, setSelectedProjektId] = useState<string>(() => {
+    const first = (state.projects ?? []).find((p: any) => p?.active);
+    return first ? String(first.id) : "";
+  });
 
-  const summary = useMemo(() => {
-    return calcDaySummary({
-      datum: selectedIso,
-      mitarbeiterId,
-      sollMinuten,
-      buchungen: state.buchungen ?? [],
-    });
-  }, [selectedIso, mitarbeiterId, sollMinuten, state.buchungen]);
+  const [selectedBereich, setSelectedBereich] = useState<Bereich>("bank");
 
-  const dayBuchungen = useMemo(() => {
-    const list = (state.buchungen ?? []).filter(
-      (b: any) => b?.mitarbeiterId === mitarbeiterId && b?.datum === selectedIso
-    );
-    // Arbeit zuerst
-    return list.slice().sort((a: any, b: any) => (a.art === b.art ? 0 : a.art === "arbeit" ? -1 : 1));
-  }, [state.buchungen, mitarbeiterId, selectedIso]);
+  const laufendeProjektId = state.running?.projektId ? String(state.running.projektId) : "";
 
   const isRunningForUser = useMemo(() => {
     return !!state.running && state.running.mitarbeiterId === mitarbeiterId;
@@ -125,70 +107,115 @@ export default function Heute({
     if (!state.running) return null;
     const p = (state.projects ?? []).find((x: any) => String(x.id) === String(state.running?.projektId));
     const pname = p ? String(p.name) : String(state.running.projektId);
-    return `Läuft: ${pname} · ${String(state.running.bereich)} · ${String(state.running.datum)}`;
+    return `Läuft: ${pname} · ${String(state.running.bereich)} · ${String(state.running.datum ?? "—")}`;
   }, [state.running, state.projects]);
 
-  // ✅ Start/Stop: datum = selectedIso
+  const daySollMin = useMemo(() => getTagesSollMinuten(selectedIso), [getTagesSollMinuten, selectedIso]);
+
+  const dayBuchungen = useMemo(() => {
+    const list = (state.buchungen ?? []).filter(
+      (b: any) => b?.mitarbeiterId === mitarbeiterId && b?.datum === selectedIso
+    );
+    // Arbeit zuerst
+    return list.slice().sort((a: any, b: any) => (a.art === b.art ? 0 : a.art === "arbeit" ? -1 : 1));
+  }, [state.buchungen, mitarbeiterId, selectedIso]);
+
+  const daySummary = useMemo(() => calcDaySummary(state as any, mitarbeiterId, selectedIso), [state, mitarbeiterId, selectedIso]);
+
   function handleStart() {
-    setState((s) => {
-      startTimer(s, {
+  if (!selectedProjektId) return;
+
+  setState((s) => {
+    try {
+      const next = startTimer(s as any, {
         mitarbeiterId,
-        projektId,
-        bereich,
+        projektId: selectedProjektId,
+        bereich: selectedBereich,
         datum: selectedIso,
-        note: note.trim() ? note.trim() : undefined,
       });
+      return next ?? s;
+    } catch (err) {
+      console.error("startTimer crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  function handleStop() {
-    setState((s) => {
-      stopTimer(s, selectedIso);
+function handleStop() {
+  setState((s) => {
+    try {
+      const next = stopTimer(s as any, {
+        mitarbeiterId,
+        datum: selectedIso,
+      });
+      return next ?? s;
+    } catch (err) {
+      console.error("stopTimer crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  function setStatus(art: "urlaub" | "krank" | "ueberstundenabbau") {
-    setState((s) => {
-      upsertStatus(s, { mitarbeiterId, datum: selectedIso, art, minuten: null });
+function setStatus(status: any) {
+  setState((s) => {
+    try {
+      const next = upsertStatus(s as any, {
+        mitarbeiterId,
+        datum: selectedIso,
+        status,
+      });
+      return next ?? s;
+    } catch (err) {
+      console.error("upsertStatus crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  function clearDayStatus() {
-    setState((s) => {
-      clearStatus(s, { mitarbeiterId, datum: selectedIso });
+function clearDayStatus() {
+  setState((s) => {
+    try {
+      const next = clearStatus(s as any, {
+        mitarbeiterId,
+        datum: selectedIso,
+      });
+      return next ?? s;
+    } catch (err) {
+      console.error("clearStatus crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  function updateWork(
-    id: string,
-    patch: Partial<{ minuten: number; note: string; projektId: string; bereich: Bereich }>
-  ) {
-    setState((s) => {
-      updateArbeitsBuchung(s, id, patch as any);
+function updateMinutes(buchungId: string, minutes: number) {
+  setState((s) => {
+    try {
+      const next = updateArbeitsBuchung(s as any, {
+        id: buchungId,
+        minuten: minutes,
+      });
+      return next ?? s;
+    } catch (err) {
+      console.error("updateArbeitsBuchung crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  function removeBuchung(id: string) {
-    setState((s) => {
-      deleteBuchung(s, id);
+function removeBuchung(buchungId: string) {
+  setState((s) => {
+    try {
+      const next = deleteBuchung(s as any, { id: buchungId });
+      return next ?? s;
+    } catch (err) {
+      console.error("deleteBuchung crashed:", err);
       return s;
-    });
-  }
+    }
+  });
+}
 
-  const box = "rounded-2xl border border-neutral-800 bg-neutral-950 p-4";
-  const label = "text-xs text-neutral-400";
-  const input =
-    "rounded-lg bg-neutral-950 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-orange-500";
-  const btn =
-    "rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 hover:border-orange-500 hover:text-orange-300";
-  const btnDanger = "rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-neutral-950 hover:bg-red-500";
-  const btnStart = "flex-1 rounded-xl bg-green-600 py-3 text-neutral-950 font-semibold hover:bg-green-500";
-  const btnStop = "flex-1 rounded-xl bg-red-600 py-3 text-neutral-950 font-semibold hover:bg-red-500";
+
+  const projects = (state.projects ?? []).filter((p: any) => p?.active);
 
   return (
     <div className="flex flex-col gap-3">
@@ -196,73 +223,91 @@ export default function Heute({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-neutral-300">
             Heute · <span className="text-neutral-100 font-semibold">{mitarbeiterName}</span>
+            {mitarbeiterOptions && onChangeMitarbeiterId ? (
+              <span className="ml-3 inline-flex items-center gap-2">
+                <span className="text-neutral-500 text-xs">Mitarbeiter:</span>
+                <select
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-100"
+                  value={mitarbeiterId}
+                  onChange={(e) => onChangeMitarbeiterId(e.target.value)}
+                >
+                  {mitarbeiterOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            ) : null}
           </div>
           {runningInfo && <div className="text-xs text-neutral-400">{runningInfo}</div>}
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
           {/* Tag (Mo–Sa) */}
-          <div className="flex flex-col gap-1">
-            <div className={label}>Tag (Mo–Sa)</div>
-            <div className="grid grid-cols-6 gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-neutral-400">Tag</div>
+            <div className="flex flex-wrap gap-2">
               {dayChoices.map((d) => (
                 <button
                   key={d.iso}
-                  className={
-                    d.iso === selectedIso
-                      ? "rounded-xl bg-orange-500 text-neutral-950 py-2 text-sm font-semibold"
-                      : "rounded-xl border border-neutral-700 bg-neutral-900 text-neutral-100 py-2 text-sm hover:border-orange-500 hover:text-orange-300"
-                  }
+                  className={selectedIso === d.iso ? btnActive : btn}
                   onClick={() => setSelectedIso(d.iso)}
-                  title={d.iso}
                 >
                   {d.label}
                 </button>
               ))}
             </div>
-            <div className="text-xs text-neutral-500 mt-1">Ausgewählt: {selectedIso}</div>
+            <div className="text-xs text-neutral-500">
+              Soll: {minutesToHoursString(daySollMin)} · Ist: {minutesToHoursString(daySummary.arbeitsMinuten)}
+            </div>
           </div>
 
           {/* Projekt */}
-          <div className="flex flex-col gap-1">
-            <div className={label}>Projekt</div>
-            <select className={input} value={projektId} onChange={(e) => setProjektId(e.target.value)}>
-              {activeProjects.map((p: any) => (
-                <option key={String(p.id)} value={String(p.id)}>
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-neutral-400">Projekt</div>
+            <select
+              className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100"
+              value={selectedProjektId}
+              onChange={(e) => setSelectedProjektId(e.target.value)}
+            >
+              {projects.length === 0 ? <option value="">(Keine aktiven Projekte)</option> : null}
+              {projects.map((p: any) => (
+                <option key={p.id} value={String(p.id)}>
                   {String(p.name)}
                 </option>
               ))}
             </select>
+
+            <div className="text-xs text-neutral-400">Bereich</div>
+            <div className="flex flex-wrap gap-2">
+              {(["maschine", "bank", "lack", "montage"] as Bereich[]).map((b) => (
+                <button
+                  key={b}
+                  className={selectedBereich === b ? btnActive : btn}
+                  onClick={() => setSelectedBereich(b)}
+                >
+                  {b}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Bereich */}
-          <div className="flex flex-col gap-1">
-            <div className={label}>Bereich</div>
-            <select className={input} value={bereich} onChange={(e) => setBereich(e.target.value as Bereich)}>
-              <option value="maschine">Maschine</option>
-              <option value="bank">Bank</option>
-              <option value="lack">Lack</option>
-              <option value="montage">Montage</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <div className="md:col-span-2 flex flex-col gap-1">
-            <div className={label}>Notiz (optional)</div>
-            <input className={input} value={note} onChange={(e) => setNote(e.target.value)} placeholder="z. B. Beschläge..." />
-          </div>
-
-          <div className="flex gap-2 items-end">
-            {!isRunningForUser ? (
-              <button className={btnStart} onClick={handleStart}>
-                ▶ Start
+          {/* Start/Stop */}
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-neutral-400">Timer</div>
+            <div className="flex flex-wrap gap-2">
+              <button className={btnActive} onClick={handleStart}>
+                Start
               </button>
-            ) : (
-              <button className={btnStop} onClick={handleStop}>
-                ■ Stop
+              <button className={isRunningForUser ? btnDanger : btn} onClick={handleStop} disabled={!isRunningForUser}>
+                Stop
               </button>
-            )}
+            </div>
+
+            <div className="text-xs text-neutral-500">
+              Laufend: {isRunningForUser ? `${laufendeProjektId || "Projekt"} (${String(state.running?.bereich)})` : "—"}
+            </div>
           </div>
         </div>
 
@@ -279,99 +324,53 @@ export default function Heute({
           <button className={btn} onClick={clearDayStatus}>
             Status löschen
           </button>
-
-          <div className="ml-auto text-xs text-neutral-400">
-            Soll: <span className="text-neutral-100 font-semibold">{minutesToHoursString(summary.sollMinuten)}</span> · Ist:{" "}
-            <span className="text-neutral-100 font-semibold">{minutesToHoursString(summary.arbeitMinuten)}</span> · ΔÜ:{" "}
-            <span className="text-neutral-100 font-semibold">{minutesToHoursString(summary.deltaUeberstundenMinuten)}</span>
-          </div>
         </div>
       </div>
 
-      {/* Buchungenliste (Kontrolle) */}
+      {/* Debug / Transparenz: Buchungen des Tages */}
       <div className={box}>
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-neutral-200 font-semibold">Buchungen ({selectedIso})</div>
-          <div className="text-xs text-neutral-500">Nach Stop muss hier sofort ein Eintrag stehen.</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-neutral-100">Buchungen des Tages</div>
+          <div className="text-xs text-neutral-500">{selectedIso}</div>
         </div>
 
         {dayBuchungen.length === 0 ? (
-          <div className="mt-3 text-sm text-neutral-400">Keine Buchungen für diesen Tag.</div>
+          <div className="mt-3 text-sm text-neutral-500">Keine Buchungen für diesen Tag.</div>
         ) : (
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-3 grid grid-cols-1 gap-2">
             {dayBuchungen.map((b: any) => {
-              if (b.art !== "arbeit") {
-                return (
-                  <div key={b.id} className="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
-                    <div className="text-sm text-neutral-200">
-                      Status: <span className="font-semibold">{String(b.art)}</span>{" "}
-                      {b.minuten == null ? "(ganzer Tag)" : `(${minutesToHoursString(Number(b.minuten) || 0)})`}
-                    </div>
-                  </div>
-                );
-              }
-
-              const p = activeProjects.find((x: any) => String(x.id) === String(b.projektId));
-              const pname = p ? String(p.name) : String(b.projektId);
-
+              const isArbeit = b.art === "arbeit";
+              const p = isArbeit ? (state.projects ?? []).find((x: any) => String(x.id) === String(b.projektId)) : null;
+              const pname = p ? String(p.name) : String(b.projektId ?? "");
               return (
-                <div key={b.id} className="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-sm text-neutral-100 font-semibold">{pname}</div>
-                    <div className="text-xs text-neutral-400">Bereich: {String(b.bereich)}</div>
-                    <div className="ml-auto text-xs text-neutral-300">
-                      Minuten: <span className="font-semibold text-neutral-100">{String(b.minuten ?? 0)}</span> (
-                      {minutesToHoursString(Number(b.minuten) || 0)})
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-4">
-                    <div className="flex flex-col gap-1">
-                      <div className={label}>Projekt</div>
-                      <select
-                        className={input}
-                        value={String(b.projektId)}
-                        onChange={(e) => updateWork(String(b.id), { projektId: e.target.value })}
-                      >
-                        {activeProjects.map((pp: any) => (
-                          <option key={String(pp.id)} value={String(pp.id)}>
-                            {String(pp.name)}
-                          </option>
-                        ))}
-                      </select>
+                <div key={String(b.id)} className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm text-neutral-100">
+                      {isArbeit ? (
+                        <>
+                          <span className="font-semibold">{pname}</span>{" "}
+                          <span className="text-neutral-400">· {String(b.bereich)}</span>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-neutral-300">Status: {String(b.status)}</span>
+                      )}
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <div className={label}>Bereich</div>
-                      <select
-                        className={input}
-                        value={String(b.bereich)}
-                        onChange={(e) => updateWork(String(b.id), { bereich: e.target.value as Bereich })}
-                      >
-                        <option value="maschine">Maschine</option>
-                        <option value="bank">Bank</option>
-                        <option value="lack">Lack</option>
-                        <option value="montage">Montage</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <div className={label}>Minuten</div>
-                      <input
-                        className={input}
-                        type="number"
-                        min={0}
-                        step={5}
-                        value={Number(b.minuten) || 0}
-                        onChange={(e) => updateWork(String(b.id), { minuten: Number(e.target.value) || 0 })}
-                      />
-                    </div>
-
-                    <div className="flex items-end gap-2">
-                      <button className={btnDanger} onClick={() => removeBuchung(String(b.id))}>
-                        Löschen
-                      </button>
-                    </div>
+                    {isArbeit ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="number"
+                          className="w-24 rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"
+                          value={Number(b.minuten ?? 0)}
+                          onChange={(e) => updateMinutes(String(b.id), Number(e.target.value))}
+                          min={0}
+                          step={15}
+                        />
+                        <button className={btnDanger} onClick={() => removeBuchung(String(b.id))}>
+                          Löschen
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
 
                   {b.note ? <div className="mt-2 text-xs text-neutral-400">Notiz: {String(b.note)}</div> : null}
