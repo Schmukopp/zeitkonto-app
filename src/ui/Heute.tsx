@@ -316,14 +316,43 @@ function updateMinutes(buchungId: string, minutes: number) {
 function removeBuchung(buchungId: string) {
   setState((s) => {
     try {
-      const next = deleteBuchung(s as any, { id: buchungId });
-      return next ?? s;
+      const before: any = s as any;
+      const beforeLen = Array.isArray(before?.buchungen) ? before.buchungen.length : 0;
+
+      // Versuch 1: timeStore deleteBuchung (egal welche Signatur)
+      const fn: any = deleteBuchung as any;
+      let next: any = undefined;
+
+      if (typeof fn === "function") {
+        if (fn.length >= 2) next = fn(s, { id: buchungId });
+        else if (fn.length === 1) next = fn(s);
+        else next = fn(s);
+      }
+
+      const out = next ?? s;
+      const after: any = out as any;
+      const afterLen = Array.isArray(after?.buchungen) ? after.buchungen.length : 0;
+
+      // Wenn es wirklich gelöscht hat -> fertig
+      if (afterLen < beforeLen) return out;
+
+      // Fallback: direkt aus State entfernen
+      const cloned: any = structuredClone(out);
+      if (!Array.isArray(cloned.buchungen)) cloned.buchungen = [];
+      cloned.buchungen = cloned.buchungen.filter((b: any) => String(b?.id) !== String(buchungId));
+      return cloned;
     } catch (err) {
-      console.error("deleteBuchung crashed:", err);
-      return s;
+      console.error("removeBuchung failed:", err);
+
+      // Harte Fallback-Variante
+      const cloned: any = structuredClone(s);
+      if (!Array.isArray(cloned.buchungen)) cloned.buchungen = [];
+      cloned.buchungen = cloned.buchungen.filter((b: any) => String(b?.id) !== String(buchungId));
+      return cloned;
     }
   });
 }
+
 
 
   const projects = (state.projects ?? []).filter((p: any) => p?.active);
