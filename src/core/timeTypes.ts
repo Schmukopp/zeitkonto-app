@@ -1,5 +1,5 @@
 // src/core/timeStore.ts
-import type { Buchung, Projekt, Bereich } from "./timeTypes";
+
 
 const LS_KEY = "orgaboard_time_v1";
 
