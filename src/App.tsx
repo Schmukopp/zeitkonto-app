@@ -22,6 +22,9 @@ import {
 
 import { loadSettings, saveSettings, type Settings } from "./core/settingsStore";
 
+import { recomputeMitarbeiterKonten } from "./core/timeRules";
+
+
 function todayIso() {
   const d = new Date();
   const y = d.getFullYear();
@@ -68,6 +71,44 @@ export default function App() {
   const setSettings = (updater: (s: Settings) => Settings) => {
     setSettingsRaw((prev) => updater(structuredClone(prev)));
   };
+
+    // ✅ Konten automatisch aus Buchungen neu berechnen (Urlaub/Ü-Stunden driftfrei)
+  useEffect(() => {
+    setMsRaw((prev) => {
+      const nextMitarbeiter = recomputeMitarbeiterKonten({
+        mitarbeiter: prev.mitarbeiter,
+        buchungen: state.buchungen ?? [],
+      });
+
+      // Nur updaten, wenn sich wirklich etwas ändert (verhindert unnötige Renders)
+      let changed = false;
+      if (nextMitarbeiter.length !== prev.mitarbeiter.length) {
+        changed = true;
+      } else {
+        for (let i = 0; i < nextMitarbeiter.length; i++) {
+          const a = nextMitarbeiter[i];
+          const b = prev.mitarbeiter[i];
+          if (!b) {
+            changed = true;
+            break;
+          }
+          if (
+            a.id !== b.id ||
+            a.urlaubstageVerbraucht !== b.urlaubstageVerbraucht ||
+            a.ueberstundenSaldo !== b.ueberstundenSaldo
+          ) {
+            changed = true;
+            break;
+          }
+        }
+      }
+
+      if (!changed) return prev;
+      return { ...prev, mitarbeiter: nextMitarbeiter };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.buchungen]);
+
 
   // Mitarbeiter-Stammdaten persistieren (robust + leicht gedrosselt)
   useEffect(() => {

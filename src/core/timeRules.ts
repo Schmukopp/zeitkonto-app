@@ -1,4 +1,6 @@
 import type { Buchung, DaySummary, StatusBuchung } from "./timeTypes";
+import type { Mitarbeiter } from "./mitarbeiterStore";
+import { urlaubswertForIsoDate } from "./workModel";
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -19,17 +21,12 @@ export function getStatus(b: Buchung[], datum: string, mitarbeiterId: string): S
 }
 
 /**
- * NEUE Regel (wie von dir gefordert):
+ * Regel:
  * - Status ist nur für Abwesenheit (urlaub/krank) und Überstundenabbau relevant.
- * - Kein "Rest auffüllen" mehr.
  * - Default (minuten === null) = ganzer Tag (sollMinuten).
- * - ueberstundenabbau ist NICHT auf (soll - arbeit) begrenzt, sondern max = sollMinuten.
+ * - ueberstundenabbau max = sollMinuten.
  */
-export function calcStatusMinuten(
-  sollMinuten: number,
-  _arbeitMinuten: number,
-  status: StatusBuchung | null
-) {
+export function calcStatusMinuten(sollMinuten: number, _arbeitMinuten: number, status: StatusBuchung | null) {
   const maxProTag = Math.max(0, sollMinuten);
 
   if (!status) {
@@ -64,10 +61,10 @@ export function calcDaySummary(args: {
   );
 
   /**
-   * ÜBERSTUNDEN-KONTO (korrekt):
+   * ÜBERSTUNDEN-KONTO:
    * - kein Status: arbeit - soll
    * - urlaub/krank: arbeit - 0  (Tag ist "abgedeckt")
-   * - ueberstundenabbau: arbeit - abbauMinuten
+   * - ueberstundenabbau: arbeit - abbauMinuten (Abbau deckt den Tag)
    */
   let deltaUeberstundenMinuten = arbeitMinuten - sollMinuten;
 
@@ -90,7 +87,7 @@ export function calcDaySummary(args: {
     abbauMinuten: status?.art === "ueberstundenabbau" ? appliedStatusMinuten : 0,
     urlaubMinuten: status?.art === "urlaub" ? appliedStatusMinuten : 0,
     krankMinuten: status?.art === "krank" ? appliedStatusMinuten : 0,
-  };
+  } as any;
 }
 
 export function minutesToHoursString(min: number) {
@@ -98,55 +95,43 @@ export function minutesToHoursString(min: number) {
   const m = Math.abs(min % 60);
   return `${h}:${String(m).padStart(2, "0")}`;
 }
-import type { Mitarbeiter } from "./mitarbeiterStore";
-import { urlaubswertForIsoDate } from "./workModel";
 
 /**
  * Deterministische Kontenberechnung aus Buchungen:
- * - UrlaubstageVerbraucht = Summe(urlaubswert) für art="urlaub"
+ * - UrlaubstageVerbraucht = Summe(urlaubswert) für Status art="urlaub"
  * - ÜberstundenSaldo (h) = Summe(deltaUeberstundenMinuten) / 60
  *
- * Wichtig:
- * - Wir rechnen bewusst aus Buchungen, damit kein Drift entsteht.
- * - Zeitraum: standardmäßig alle Buchungen. (Optional später: nur aktuelles Kalenderjahr)
+ * Hinweis: Wir rechnen bewusst aus Buchungen, damit es nie Drift gibt.
  */
-export function recomputeMitarbeiterKonten(args: {
-  mitarbeiter: Mitarbeiter[];
-  buchungen: Buchung[];
-}): Mitarbeiter[] {
+export function recomputeMitarbeiterKonten(args: { mitarbeiter: Mitarbeiter[]; buchungen: Buchung[] }): Mitarbeiter[] {
   const { mitarbeiter, buchungen } = args;
-
-  // Index: pro Mitarbeiter alle (datum -> status) + Sollminuten je Datum brauchen wir aus modell.
-  // Wir laufen pragmatisch über alle Statusbuchungen und alle Arbeitstage, die es gibt.
-  // Für Überstunden nehmen wir calcDaySummary (damit Regeln zentral sind).
 
   // Sammle alle Tage pro Mitarbeiter, die irgendwo vorkommen (Arbeit oder Status)
   const daysByM = new Map<string, Set<string>>();
-  for (const b of buchungen) {
-    const mid = (b as any).mitarbeiterId;
-    const d = (b as any).datum;
+  for (const b of buchungen ?? []) {
+    const mid = (b as any)?.mitarbeiterId;
+    const d = (b as any)?.datum;
     if (!mid || !d) continue;
-    if (!daysByM.has(mid)) daysByM.set(mid, new Set());
-    daysByM.get(mid)!.add(String(d));
+    if (!daysByM.has(String(mid))) daysByM.set(String(mid), new Set());
+    daysByM.get(String(mid))!.add(String(d).slice(0, 10));
   }
 
-  return mitarbeiter.map((m) => {
+  // Helfer: Soll-Minuten aus Modell ohne zusätzliche Imports
+  function sollMinutenFromModell(m: Mitarbeiter, iso: string) {
+    const js = new Date(iso + "T00:00:00").getDay(); // 0=So..6=Sa
+    const map: Record<number, keyof typeof m.modell.tage> = { 1: "mo", 2: "di", 3: "mi", 4: "do", 5: "fr" };
+    const t = map[js];
+    return t ? (m.modell.tage[t]?.sollMinuten ?? 0) : 0;
+  }
+
+  return (mitarbeiter ?? []).map((m) => {
     const days = daysByM.get(m.id) ?? new Set<string>();
 
     let sumDeltaUeMin = 0;
     let sumUrlaubTage = 0;
 
     for (const datum of days) {
-      // Soll-Minuten aus Wochenmodell
-      const sollMinuten = (() => {
-        // workModel: Sa/So => 0, Mo–Fr => modell.tage[tag].sollMinuten
-        // Wir nutzen deine bestehende Logik indirekt: in timeStore/Heute wird sollMinuten über sollMinutenForIsoDate gebildet.
-        // Hier rechnen wir direkt:
-        const js = new Date(datum + "T00:00:00").getDay(); // 0=So..6=Sa
-        const map: Record<number, keyof typeof m.modell.tage> = { 1: "mo", 2: "di", 3: "mi", 4: "do", 5: "fr" };
-        const t = map[js];
-        return t ? (m.modell.tage[t]?.sollMinuten ?? 0) : 0;
-      })();
+      const sollMinuten = sollMinutenFromModell(m, datum);
 
       const day = calcDaySummary({
         datum,
@@ -157,13 +142,13 @@ export function recomputeMitarbeiterKonten(args: {
 
       sumDeltaUeMin += day.deltaUeberstundenMinuten;
 
-      if (day.statusArt === "urlaub") {
-        // Urlaub in TAGEN nach Urlaubswert (0..1)
+      // Urlaub wird in Tagen nach Urlaubswert (0..1) gerechnet (Teilzeit!)
+      if (day.statusArt === "urlaub" && (day.statusMinuten ?? 0) > 0) {
         sumUrlaubTage += urlaubswertForIsoDate(m.modell, datum);
       }
     }
 
-    const nextSaldoH = Math.round((sumDeltaUeMin / 60) * 100) / 100; // 2 Dezimalstellen
+    const nextSaldoH = Math.round((sumDeltaUeMin / 60) * 100) / 100;
     const nextUrlaubVerb = Math.round(sumUrlaubTage * 100) / 100;
 
     return {
