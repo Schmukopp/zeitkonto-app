@@ -27,7 +27,7 @@ const BOOKING_LANE_H = 24;
 
 const ROW_H = PROJECT_BAND_H + BOOKING_LANES * BOOKING_LANE_H;
 
-// Basis-Kapazität pro Worker und Tag (10h = 600min; wie du es mehrfach als Beispiel nutzt)
+// Basis-Kapazität pro Worker und Tag (10h = 600min)
 const BASE_CAP_MIN = 600;
 
 function pad2(n: number) {
@@ -154,7 +154,7 @@ function pickMinutes(e: any): number {
 
 // ===== Meister-/Operativ-Felder aus Projekt ziehen =====
 function pickPlannerMeisterId(p: any): string | null {
-  const cands = [p?.meisterId, p?.hauptverantwortlicherId, p?.verantwortlicherId, p?.ownerId];
+  const cands = [p?.meisterId, p?.hauptverantwortlicherId, p?.verantwortlicherId, p?.ownerId, p?.hauptdarstellerId];
   for (const c of cands) {
     if (typeof c === "string" && c.trim()) return c;
   }
@@ -256,9 +256,7 @@ function extractProjectTotals(state: any) {
 }
 
 // ===== Tagesindex je Mitarbeiter: Projekte pro Tag =====
-function extractEmployeeDayProjectMinutes(
-  state: any
-): Map<string, Array<{ projektId: string; minuten: number }>> {
+function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ projektId: string; minuten: number }>> {
   const arr = Array.isArray(state?.buchungen) ? state.buchungen : [];
   const tmp = new Map<string, Map<string, number>>();
 
@@ -300,7 +298,7 @@ type Block = {
   id: string;
   name: string;
   rowId: string;
-  startColTop: number; // echter Start (erste Buchung) als Block-Start
+  startColTop: number; // Block-Start (verschoben auf erste Buchung)
   spanCols: number; // dynamisch: verkürzt/verlängert
   meisterId: string | null;
   planMinuten: number;
@@ -320,10 +318,6 @@ type BlockPart = {
   relStart: number;
   firstIso: string | null;
 };
-
-function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number) {
-  return aStart < bEnd && bStart < aEnd;
-}
 
 // ===== Buchungs-Packing =====
 type PackedSeg = {
@@ -414,12 +408,11 @@ export default function Board({ state, setState, ms }: Props) {
   }, [activeProjects, layout, mitarbeiter]);
 
   /**
-   * Dynamische Dauer in Tagen (Mo–Sa Raster):
+   * Dynamische Dauer in Cols (Mo–Sa Raster):
    * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
    * - Tage mit Buchung: Kapazität = BASE_CAP_MIN * workerCountThatDay
    * - Tage ohne Buchung: workerCount = 1 (Default)
-   * - Samstag zählt wie normal, ABER: wenn Samstag keine Buchung hat, dann wird er als "Pause" übersprungen
-   *   (wie dein Strahl-Rule). Dadurch kann sich die Dauer "über Samstag" nach hinten schieben.
+   * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte bleibt, aber verbraucht keine Minuten)
    */
   function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
     if (minutesTarget <= 0) return 1;
@@ -427,17 +420,17 @@ export default function Board({ state, setState, ms }: Props) {
     let remain = minutesTarget;
     let cols = 0;
 
-    // wir begrenzen hart, damit nichts explodiert
     const MAX_COLS = COLS * 2; // über 2 Reihen hinaus wird visuell eh abgeschnitten
     for (let i = 0; i < MAX_COLS; i++) {
       const dayIso = isoDate(addDays(parseIso(startIso), i));
       const key = `${projectId}__${dayIso}`;
 
       const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
-      const saturday = parseIso(dayIso).getUTCDay() === 6;
 
-      // Samstag optisch/technisch als Pause, wenn nicht gebucht
-      if (saturday && bookedThatDay <= 0) {
+      const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+      const isFriOrSat = dow === 5 || dow === 6;
+
+      if (isFriOrSat && bookedThatDay <= 0) {
         cols++;
         continue;
       }
@@ -474,7 +467,7 @@ export default function Board({ state, setState, ms }: Props) {
       // Ziel-Minuten: verlängert wenn über Kalk
       const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
-      // Planung -> ISO
+      // Planung -> ISO (aus Board-Grid)
       const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
 
       // Echter Start (erste Buchung) verschiebt das ganze Projekt
@@ -485,7 +478,7 @@ export default function Board({ state, setState, ms }: Props) {
       // StartIso des Blocks (für Dauerberechnung)
       const startIso = firstIso ?? plannedStartIso;
 
-      // Dynamische Dauer in Cols (verkürzt durch Parallelität, verlängert bei Überschreitung)
+      // Dynamische Dauer in Cols
       const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
       return {
@@ -506,7 +499,6 @@ export default function Board({ state, setState, ms }: Props) {
    * Ketten-Layout:
    * - Projekte pro row nach startColTop sortieren
    * - erstes Projekt bleibt, alle folgenden werden direkt dahinter gesetzt
-   * => dadurch rutschen Folgeprojekte automatisch mit, wenn sich span verkürzt/verlängert
    */
   const blocks: Block[] = useMemo(() => {
     const byRow = new Map<string, Block[]>();
@@ -524,13 +516,11 @@ export default function Board({ state, setState, ms }: Props) {
         const b = sorted[i];
 
         if (i === 0) {
-          // erstes Projekt bleibt an seinem Start
           cursor = clamp(b.startColTop, 0, COLS - 1) + b.spanCols;
           out.push(b);
           continue;
         }
 
-        // Folgeprojekte: direkt hinter das vorherige
         const newStart = clamp(cursor, 0, COLS - 1);
         b.startColTop = newStart;
         cursor = newStart + b.spanCols;
@@ -706,140 +696,121 @@ export default function Board({ state, setState, ms }: Props) {
   }
 
   // ===== Projekt-Fortschritt-Overlay (parallel = mehr Tageskapazität => echte Kalender-Kompression) =====
-function renderProjectProgressOverlay(p: BlockPart) {
-  const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
-  const planMin = Math.max(0, p.planMinuten);
-  const first = p.firstIso;
+  function renderProjectProgressOverlay(p: BlockPart) {
+    const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
+    const planMin = Math.max(0, p.planMinuten);
+    const first = p.firstIso;
 
-  if (totalMin <= 0 || !first) return null;
+    if (totalMin <= 0 || !first) return null;
 
-  // Wir rechnen global über das Projekt (ab firstIso), aber rendern nur den sichtbaren Part (relStart..relStart+span)
-  let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
-  let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : totalMin; // falls kein Plan gepflegt, ist alles "over" (Ist)
+    // Hinweis: Wir rendern nur die sichtbaren Tage dieses BlockParts (p.span),
+    // aber global ist die Reihenfolge weiterhin ab firstIso + (relStart + localDay).
+    let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
+    let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : totalMin;
 
-  const partsStartPx = p.relStart * CELL_W;
-  const partsEndPx = (p.relStart + p.span) * CELL_W;
+    const partsStartPx = p.relStart * CELL_W;
+    const partsEndPx = (p.relStart + p.span) * CELL_W;
 
-  const segs: Array<{
-    left: number;
-    width: number;
-    kind: "in" | "over";
-    colorNode: React.ReactNode | null;
-  }> = [];
+    const segs: Array<{ left: number; width: number; kind: "in" | "over"; colorNode: React.ReactNode | null }> = [];
 
-  // Farbaufteilung nach Arbeitsarten (bleibt wie gehabt)
-  const area =
-    projTotals.areaMin.get(p.projectId) ??
-    ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
+    const area =
+      projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
+    const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
+    const areaShares: Array<{ b: Bereich; share: number }> = [
+      { b: "maschine", share: area.maschine / areaTotal },
+      { b: "bank", share: area.bank / areaTotal },
+      { b: "lack", share: area.lack / areaTotal },
+      { b: "montage", share: area.montage / areaTotal },
+    ].filter((x) => x.share > 0.0001);
 
-  const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
-  const areaShares: Array<{ b: Bereich; share: number }> = [
-    { b: "maschine", share: area.maschine / areaTotal },
-    { b: "bank", share: area.bank / areaTotal },
-    { b: "lack", share: area.lack / areaTotal },
-    { b: "montage", share: area.montage / areaTotal },
-  ].filter((x) => x.share > 0.0001);
-
-  function renderInColor() {
-    if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;
-    return (
-      <div className="h-full w-full flex">
-        {areaShares.map((x, idx) => (
-          <div
-            key={`${x.b}_${idx}`}
-            className={`h-full ${bereichColorClass(x.b)}`}
-            style={{ width: `${x.share * 100}%` }}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  // Wir iterieren NUR über die sichtbaren Tage dieses Block-Parts
-  for (let localDay = 0; localDay < p.span; localDay++) {
-    if (remainIn <= 0 && remainOver <= 0) break;
-
-    const globalDay = p.relStart + localDay;
-
-    const dayStartPx = globalDay * CELL_W;
-    const dayEndPx = dayStartPx + CELL_W;
-
-    const partVisibleStart = Math.max(partsStartPx, dayStartPx);
-    const partVisibleEnd = Math.min(partsEndPx, dayEndPx);
-    if (partVisibleEnd - partVisibleStart <= 0) continue;
-
-    const dayIso = isoDate(addDays(parseIso(first), globalDay));
-    const key = `${p.projectId}__${dayIso}`;
-    const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
-
-    // Samstag-Pause: Wenn Samstag keine Buchung hat => kein Fortschritt an dem Tag (optisch bleibt er als Raster)
-    const saturday = parseIso(dayIso).getUTCDay() === 6;
-    if (saturday && bookedThatDay <= 0) continue;
-
-    // Worker-Anzahl am Tag => Tageskapazität
-    let workersCount = 1;
-    const workers = projTotals.dayWorkers.get(key);
-    if (workers && workers.size > 0) workersCount = Math.max(1, workers.size);
-
-    const dayCapMin = BASE_CAP_MIN * workersCount;
-
-    // Wie viel wird an diesem Tag "verbraucht" (erst in-plan, dann over)
-    const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
-    const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
-
-    const used = takeIn > 0 ? takeIn : takeOver;
-    if (used <= 0) continue;
-
-    // WICHTIG: Breite innerhalb des Tages relativ zur TAGESKAPAZITÄT,
-    // damit Parallelität echte Kalender-Kompression sichtbar macht.
-    const wPx = clamp(Math.round((used / dayCapMin) * CELL_W), 2, CELL_W);
-
-    const segLeft = Math.max(partVisibleStart, dayStartPx);
-    const segRight = Math.min(partVisibleEnd, dayStartPx + wPx);
-    const segW = segRight - segLeft;
-
-    if (segW > 0) {
-      segs.push({
-        left: segLeft - partsStartPx,
-        width: segW,
-        kind: takeIn > 0 ? "in" : "over",
-        colorNode: takeIn > 0 ? renderInColor() : null,
-      });
+    function renderInColor() {
+      if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;
+      return (
+        <div className="h-full w-full flex">
+          {areaShares.map((x, idx) => (
+            <div
+              key={`${x.b}_${idx}`}
+              className={`h-full ${bereichColorClass(x.b)}`}
+              style={{ width: `${x.share * 100}%` }}
+            />
+          ))}
+        </div>
+      );
     }
 
-    if (takeIn > 0) remainIn -= takeIn;
-    else remainOver -= takeOver;
-  }
+    for (let localDay = 0; localDay < p.span; localDay++) {
+      if (remainIn <= 0 && remainOver <= 0) break;
 
-  if (segs.length === 0) return null;
+      const globalDay = p.relStart + localDay;
 
-  return (
-    <>
-      {segs.map((s, idx) => {
-        if (s.kind === "in") {
+      const dayStartPx = globalDay * CELL_W;
+      const dayEndPx = dayStartPx + CELL_W;
+
+      const partVisibleStart = Math.max(partsStartPx, dayStartPx);
+      const partVisibleEnd = Math.min(partsEndPx, dayEndPx);
+      if (partVisibleEnd - partVisibleStart <= 0) continue;
+
+      const dayIso = isoDate(addDays(parseIso(first), globalDay));
+      const key = `${p.projectId}__${dayIso}`;
+      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
+
+      // Freitag+Samstag: wenn nicht gebucht => Pause (kein Fortschritt)
+      const dow = parseIso(dayIso).getUTCDay();
+      const isFriOrSat = dow === 5 || dow === 6;
+      if (isFriOrSat && bookedThatDay <= 0) continue;
+
+      let workersCount = 1;
+      const workers = projTotals.dayWorkers.get(key);
+      if (workers && workers.size > 0) workersCount = Math.max(1, workers.size);
+
+      const dayCapMin = BASE_CAP_MIN * workersCount;
+
+      const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
+      const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
+
+      const used = takeIn > 0 ? takeIn : takeOver;
+      if (used <= 0) continue;
+
+      // Breite innerhalb des Tages relativ zur Tageskapazität (Parallelität = Kompression sichtbar)
+      const wPx = clamp(Math.round((used / dayCapMin) * CELL_W), 2, CELL_W);
+
+      const segLeft = Math.max(partVisibleStart, dayStartPx);
+      const segRight = Math.min(partVisibleEnd, dayStartPx + wPx);
+      const segW = segRight - segLeft;
+
+      if (segW > 0) {
+        segs.push({
+          left: segLeft - partsStartPx,
+          width: segW,
+          kind: takeIn > 0 ? "in" : "over",
+          colorNode: takeIn > 0 ? renderInColor() : null,
+        });
+      }
+
+      if (takeIn > 0) remainIn -= takeIn;
+      else remainOver -= takeOver;
+    }
+
+    if (segs.length === 0) return null;
+
+    return (
+      <>
+        {segs.map((s, idx) => {
+          if (s.kind === "in") {
+            return (
+              <div key={idx} className="absolute top-0 bottom-0" style={{ left: s.left, width: s.width }}>
+                {s.colorNode}
+                <div className="absolute inset-0 bg-blue-900/15" />
+              </div>
+            );
+          }
           return (
-            <div
-              key={idx}
-              className="absolute top-0 bottom-0"
-              style={{ left: s.left, width: s.width }}
-            >
-              {s.colorNode}
-              <div className="absolute inset-0 bg-blue-900/15" />
-            </div>
+            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
           );
-        }
-        return (
-          <div
-            key={idx}
-            className="absolute top-0 bottom-0 bg-red-600"
-            style={{ left: s.left, width: s.width }}
-          />
-        );
-      })}
-    </>
-  );
-}
-
+        })}
+      </>
+    );
+  }
 
   function renderSection(weekRow: 0 | 1, weeks4: Date[], scrollRef: React.RefObject<HTMLDivElement>) {
     const parts = blockParts.filter((p) => p.weekRow === weekRow);
@@ -1009,21 +980,22 @@ function renderProjectProgressOverlay(p: BlockPart) {
                             p.firstIso ?? "—"
                           }`}
                         >
-                          {/* Raster im Block + Samstag-Cut (kalenderkorrekt über Board-Datum) */}
+                          {/* Raster im Block + Freitag/Samstag-Cut */}
                           <div className="absolute inset-0 flex">
                             {Array.from({ length: p.span }).map((_, i) => {
                               const cellDate = dateForCol(p.weekRow, p.startCol + i);
-                              const isSat = cellDate.getUTCDay() === 6;
+                              const dow = cellDate.getUTCDay();
+                              const isFriOrSat = dow === 5 || dow === 6;
 
                               return (
                                 <div
                                   key={i}
                                   className={`relative h-full border-r border-neutral-800/60 ${
-                                    isSat ? "bg-neutral-900" : "bg-neutral-950"
+                                    isFriOrSat ? "bg-neutral-900" : "bg-neutral-950"
                                   }`}
                                   style={{ width: CELL_W }}
                                 >
-                                  {isSat ? (
+                                  {isFriOrSat ? (
                                     <>
                                       <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
                                       <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
@@ -1074,8 +1046,8 @@ function renderProjectProgressOverlay(p: BlockPart) {
       {renderSection(0, topWeeks, scrollTopRef)}
       {renderSection(1, bottomWeeks, scrollBottomRef)}
       <div className="text-xs text-neutral-500">
-        Neu: Projektblock-Länge ist dynamisch (verkürzt bei Parallelität, verlängert bei Überschreitung) und Folgeprojekte
-        rutschen in der Zeile automatisch mit.
+        Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert). Freitag+Samstag gelten als
+        Pause, wenn dort nicht gebucht wurde.
       </div>
     </div>
   );
