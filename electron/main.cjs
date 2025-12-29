@@ -23,7 +23,6 @@ function createWindow() {
   if (isDev) {
     const devUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173";
     win.loadURL(devUrl);
-    win.webContents.openDevTools({ mode: "detach" });
   } else {
     const indexHtml = path.join(__dirname, "..", "dist", "index.html");
     win.loadFile(indexHtml);
