@@ -14,19 +14,22 @@ import {
 } from "../core/timeStore";
 
 type Props = {
-  state: State;
-  setState: (updater: (s: State) => State) => void;
+  state: any;
+  setState: (updater: (s: any) => any) => void;
 
   mitarbeiterId: string;
   mitarbeiterName: string;
 
-  mitarbeiterOptions?: Array<{ id: string; name: string }>;
-  onChangeMitarbeiterId?: (id: string) => void;
+  mitarbeiterOptions: { id: string; name: string }[];
+  onChangeMitarbeiterId: (id: string) => void;
 
   getTagesSollMinuten: (isoDate: string) => number;
+  isoDate: string;
 
-  isoDate: string; // System-"Heute" als ISO
+  activeBookingProjektId: string;
+  clearActiveBooking: () => void;
 };
+
 
 type DayChoice = { label: string; iso: string };
 
@@ -298,7 +301,7 @@ export default function Heute({
               ))}
             </div>
             <div className="text-xs text-neutral-500">
-              Soll: {minutesToHoursString(daySollMin)} · Ist: {minutesToHoursString(daySummary.arbeitsMinuten)}
+              Soll: {minutesToHoursString(daySollMin)} · Ist: {minutesToHoursString(daySummary.arbeitMinuten)}
             </div>
           </div>
 

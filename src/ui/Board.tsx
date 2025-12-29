@@ -10,7 +10,11 @@ type Props = {
   state: State;
   setState: (updater: (s: State) => State) => void;
   ms: MitarbeiterState;
+
+  activeBookingProjektId: string;
+  setActiveBookingProjektId: (pid: string) => void;
 };
+
 
 type Bereich = "maschine" | "bank" | "lack" | "montage";
 
@@ -762,11 +766,11 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
       projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
     const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
     const areaShares: Array<{ b: Bereich; share: number }> = [
-      { b: "maschine", share: area.maschine / areaTotal },
-      { b: "bank", share: area.bank / areaTotal },
-      { b: "lack", share: area.lack / areaTotal },
-      { b: "montage", share: area.montage / areaTotal },
-    ].filter((x) => x.share > 0.0001);
+  { b: "maschine" as Bereich, share: 0 },
+  { b: "bank" as Bereich, share: 0 },
+  { b: "lack" as Bereich, share: 0 },
+  { b: "montage" as Bereich, share: 0 },
+];
 
     function renderInColor() {
       if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;

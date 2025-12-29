@@ -1,4 +1,65 @@
-// src/core/timeStore.ts
+// ===== Basis-Typen (zentral exportiert) =====
+
+export type Bereich = "maschine" | "bank" | "lack" | "montage";
+
+export type Projekt = {
+  id: string;
+  name: string;
+  active?: boolean;
+
+  // optional: neue Kalkulation pro Arbeitsart (wenn vorhanden)
+  arbeitsarten?: Partial<Record<Bereich, { kalkMinuten: number }>>;
+
+  // fallback (alt)
+  kalkStunden?: number;
+
+  planNettoVkEur?: number;
+  planMaterialEur?: number;
+  istNettoVkEur?: number;
+  istMaterialEur?: number;
+};
+
+export type ArbeitBuchung = {
+  id: string;
+  art: "arbeit";
+  mitarbeiterId: string;
+  projektId: string;
+  datum: string; // YYYY-MM-DD
+  minuten: number;
+  bereich: Bereich;
+  note?: string;
+};
+
+export type StatusArt = "urlaub" | "krank" | "ueberstundenabbau";
+
+export type StatusBuchung = {
+  id: string;
+  art: StatusArt;
+  mitarbeiterId: string;
+  datum: string; // YYYY-MM-DD
+  minuten: number | null; // null = ganzer Tag (sollMinuten)
+  note?: string;
+};
+
+export type Buchung = ArbeitBuchung | StatusBuchung;
+
+export type DaySummary = {
+  datum: string;
+  sollMinuten: number;
+  arbeitMinuten: number;
+
+  statusArt: StatusArt | null;
+  statusMinuten: number;
+
+  maxAbbauMinuten: number;
+
+  deltaUeberstundenMinuten: number;
+
+  abbauMinuten: number;
+  urlaubMinuten: number;
+  krankMinuten: number;
+};
+
 
 
 const LS_KEY = "orgaboard_time_v1";
