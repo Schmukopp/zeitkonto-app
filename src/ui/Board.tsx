@@ -15,11 +15,20 @@ type Bereich = "maschine" | "bank" | "lack" | "montage";
 const DAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
 const COLS = 24; // 4 Wochen * 6 Tage
-const LANES = 3;
-
 const CELL_W = 80;
 const NAME_COL_W = 240;
-const LANE_H = 32;
+
+// Band 1 (oben): Projektspur
+const PROJECT_BAND_H = 32;
+
+// Band 2 (unten): Buchungen (Auto-Pack)
+const BOOKING_LANES = 2;
+const BOOKING_LANE_H = 24;
+
+const ROW_H = PROJECT_BAND_H + BOOKING_LANES * BOOKING_LANE_H;
+
+// Basis-Kapazität pro Worker und Tag (10h = 600min; wie du es mehrfach als Beispiel nutzt)
+const BASE_CAP_MIN = 600;
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -34,7 +43,10 @@ function isoDate(d: Date) {
 }
 
 function parseIso(iso: string): Date {
-  const [y, m, d] = iso.split("-").map((x) => Number(x));
+  const [y, m, d] = String(iso ?? "")
+    .slice(0, 10)
+    .split("-")
+    .map((x) => Number(x));
   return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 0, 0, 0, 0));
 }
 
@@ -47,7 +59,7 @@ function addDays(d: Date, days: number) {
 function startOfWeekMondayUTC(d: Date) {
   const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
   const day = x.getUTCDay(); // 0=So..6=Sa
-  const diff = (day === 0 ? -6 : 1) - day; // Montag
+  const diff = (day === 0 ? -6 : 1) - day;
   x.setUTCDate(x.getUTCDate() + diff);
   return x;
 }
@@ -55,8 +67,8 @@ function startOfWeekMondayUTC(d: Date) {
 // ===== Kalenderjahr-KW (erste KW = Woche ab erstem Montag im Jahr) =====
 function firstMondayOfYearUTC(year: number): Date {
   const jan1 = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
-  const dow = jan1.getUTCDay(); // 0=So..6=Sa
-  const offset = (dow === 0 ? 1 : 8 - dow) % 7; // bis Montag
+  const dow = jan1.getUTCDay();
+  const offset = (dow === 0 ? 1 : 8 - dow) % 7;
   return new Date(Date.UTC(year, 0, 1 + offset, 0, 0, 0, 0));
 }
 
@@ -64,19 +76,15 @@ function kalenderjahrKW(date: Date): number {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
   const year = d.getUTCFullYear();
   const firstMon = firstMondayOfYearUTC(year);
-
   const diffDays = Math.floor((d.getTime() - firstMon.getTime()) / 86400000);
-
-  // Tage vor erstem Montag: wir geben KW 1 aus (praktisch, keine KW0)
   if (diffDays < 0) return 1;
-
   return Math.floor(diffDays / 7) + 1;
 }
 
-// Anzeige-Ende einer KW im Kalenderjahr: Mo–Sa, aber niemals über 31.12 hinaus
+// Anzeige-Ende einer KW: Mo–Sa, aber niemals über 31.12 hinaus
 function weekEndDisplayMoSaCapped(weekStartMonday: Date): Date {
   const year = weekStartMonday.getUTCFullYear();
-  const end = addDays(weekStartMonday, 5); // Mo–Sa
+  const end = addDays(weekStartMonday, 5);
   const dec31 = new Date(Date.UTC(year, 11, 31, 0, 0, 0, 0));
   return end.getTime() > dec31.getTime() ? dec31 : end;
 }
@@ -107,7 +115,44 @@ function diffDaysIso(fromIso: string, toIso: string) {
   return Math.round((b - a) / 86400000);
 }
 
-// ===== Meister-/Operativ-Felder aus Projekt ziehen (robust gegen Feldnamen) =====
+// ===== Robuste Feldzugriffe =====
+function pickIso(e: any): string {
+  const cands = [e?.datum, e?.date, e?.iso, e?.day];
+  for (const c of cands) {
+    if (typeof c === "string" && c.trim()) return c.trim().slice(0, 10);
+  }
+  return "";
+}
+
+function pickProjektId(e: any): string {
+  const cands = [e?.projektId, e?.projectId, e?.projektID, e?.projectID, e?.pid];
+  for (const c of cands) {
+    if (c == null) continue;
+    const s = String(c);
+    if (s.trim()) return s;
+  }
+  return "";
+}
+
+function pickMitarbeiterId(e: any): string {
+  const cands = [e?.mitarbeiterId, e?.employeeId, e?.mitarbeiterID, e?.mid];
+  for (const c of cands) {
+    if (c == null) continue;
+    const s = String(c);
+    if (s.trim()) return s;
+  }
+  return "";
+}
+
+function pickMinutes(e: any): number {
+  const min = safeNumber(e?.minuten) || safeNumber(e?.minutes);
+  if (min > 0) return Math.max(0, Math.round(min));
+  const hrs = safeNumber(e?.stunden) || safeNumber(e?.hours);
+  if (hrs > 0) return Math.max(0, Math.round(hrs * 60));
+  return 0;
+}
+
+// ===== Meister-/Operativ-Felder aus Projekt ziehen =====
 function pickPlannerMeisterId(p: any): string | null {
   const cands = [p?.meisterId, p?.hauptverantwortlicherId, p?.verantwortlicherId, p?.ownerId];
   for (const c of cands) {
@@ -162,25 +207,27 @@ function bereichColorClass(b: Bereich) {
   }
 }
 
-// ===== Aus Buchungen: Projekt totals + first booking + Bereiche =====
+// ===== Projekt-Totals inkl. dayMin + dayWorkers =====
 function extractProjectTotals(state: any) {
   const arr = Array.isArray(state?.buchungen) ? state.buchungen : [];
+
   const totalMin = new Map<string, number>();
   const firstIso = new Map<string, string>();
   const areaMin = new Map<string, Record<Bereich, number>>();
+  const dayMin = new Map<string, number>(); // `${projektId}__${iso}`
+  const dayWorkers = new Map<string, Set<string>>(); // `${projektId}__${iso}` => Set(mid)
 
   const emptyAreas = (): Record<Bereich, number> => ({ maschine: 0, bank: 0, lack: 0, montage: 0 });
 
   for (const e of arr) {
     if (!e || typeof e !== "object") continue;
-    if ((e as any).art !== "arbeit") continue;
+    if (String(e?.art ?? "") !== "arbeit") continue;
 
-    const projektId = String((e as any).projektId ?? "");
-    const datum = String((e as any).datum ?? "");
+    const projektId = pickProjektId(e);
+    const datum = pickIso(e);
     if (!projektId || !datum) continue;
 
-    const min = safeNumber((e as any).minuten) || safeNumber((e as any).stunden) * 60 || 0;
-    const minutes = Math.max(0, Math.round(min));
+    const minutes = pickMinutes(e);
     if (minutes <= 0) continue;
 
     totalMin.set(projektId, (totalMin.get(projektId) ?? 0) + minutes);
@@ -188,7 +235,16 @@ function extractProjectTotals(state: any) {
     const curFirst = firstIso.get(projektId);
     if (!curFirst || datum < curFirst) firstIso.set(projektId, datum);
 
-    const bRaw = (e as any).bereich;
+    const key = `${projektId}__${datum}`;
+    dayMin.set(key, (dayMin.get(key) ?? 0) + minutes);
+
+    const mid = pickMitarbeiterId(e);
+    if (mid) {
+      if (!dayWorkers.has(key)) dayWorkers.set(key, new Set());
+      dayWorkers.get(key)!.add(String(mid));
+    }
+
+    const bRaw = e?.bereich;
     const bereich: Bereich | null = isBereich(bRaw) ? bRaw : null;
     if (bereich) {
       if (!areaMin.has(projektId)) areaMin.set(projektId, emptyAreas());
@@ -196,10 +252,10 @@ function extractProjectTotals(state: any) {
     }
   }
 
-  return { totalMin, firstIso, areaMin };
+  return { totalMin, firstIso, areaMin, dayMin, dayWorkers };
 }
 
-// ===== Tages-Spuren je Mitarbeiter (alle Projekte) =====
+// ===== Tagesindex je Mitarbeiter: Projekte pro Tag =====
 function extractEmployeeDayProjectMinutes(
   state: any
 ): Map<string, Array<{ projektId: string; minuten: number }>> {
@@ -208,15 +264,14 @@ function extractEmployeeDayProjectMinutes(
 
   for (const e of arr) {
     if (!e || typeof e !== "object") continue;
-    if ((e as any).art !== "arbeit") continue;
+    if (String(e?.art ?? "") !== "arbeit") continue;
 
-    const mitarbeiterId = String((e as any).mitarbeiterId ?? "");
-    const projektId = String((e as any).projektId ?? "");
-    const datum = String((e as any).datum ?? "");
+    const mitarbeiterId = pickMitarbeiterId(e);
+    const projektId = pickProjektId(e);
+    const datum = pickIso(e);
     if (!mitarbeiterId || !projektId || !datum) continue;
 
-    const min = safeNumber((e as any).minuten) || safeNumber((e as any).stunden) * 60 || 0;
-    const minutes = Math.max(0, Math.round(min));
+    const minutes = pickMinutes(e);
     if (minutes <= 0) continue;
 
     const key = `${mitarbeiterId}__${datum}`;
@@ -245,10 +300,11 @@ type Block = {
   id: string;
   name: string;
   rowId: string;
-  plannedStartColTop: number;
-  spanCols: number;
+  startColTop: number; // echter Start (erste Buchung) als Block-Start
+  spanCols: number; // dynamisch: verkürzt/verlängert
   meisterId: string | null;
   planMinuten: number;
+  firstIso: string | null;
 };
 
 type BlockPart = {
@@ -262,65 +318,27 @@ type BlockPart = {
   meisterId: string | null;
   planMinuten: number;
   relStart: number;
+  firstIso: string | null;
 };
 
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-function findNextFreeStartCol(
-  desiredCol: number,
-  spanCols: number,
-  existingTopParts: Array<{ startCol: number; span: number }>,
-  cols: number
-) {
-  const want = clamp(desiredCol, 0, cols - 1);
+// ===== Buchungs-Packing =====
+type PackedSeg = {
+  key: string;
+  col: number;
+  lane: number;
+  leftPx: number;
+  widthPx: number;
+  label: string;
+  tooltip: string;
+  colorClass: string;
+};
 
-  for (let c = want; c < cols; c++) {
-    const topSpan = Math.min(spanCols, cols - c);
-    const aStart = c;
-    const aEnd = c + topSpan;
-
-    let ok = true;
-    for (const p of existingTopParts) {
-      const bStart = p.startCol;
-      const bEnd = p.startCol + p.span;
-      if (overlaps(aStart, aEnd, bStart, bEnd)) {
-        ok = false;
-        break;
-      }
-    }
-
-    if (ok) return c;
-  }
-
-  return cols - 1;
-}
-
-function assignLanes(parts: Array<{ key: string; startCol: number; span: number }>, lanes: number) {
-  const sorted = parts.slice().sort((a, b) => (a.startCol - b.startCol) || (a.span - b.span));
-
-  const laneEnd: number[] = Array.from({ length: lanes }, () => -1);
-  const laneByKey = new Map<string, number>();
-
-  for (const p of sorted) {
-    const start = p.startCol;
-    const end = p.startCol + p.span;
-
-    let placed = false;
-    for (let lane = 0; lane < lanes; lane++) {
-      if (start >= laneEnd[lane]) {
-        laneByKey.set(p.key, lane);
-        laneEnd[lane] = end;
-        placed = true;
-        break;
-      }
-    }
-
-    if (!placed) laneByKey.set(p.key, lanes - 1);
-  }
-
-  return laneByKey;
+function pickColorForProject(_projectId: string, meisterId: string | null) {
+  return meisterColorClass(meisterId);
 }
 
 export default function Board({ state, setState, ms }: Props) {
@@ -328,10 +346,10 @@ export default function Board({ state, setState, ms }: Props) {
   const projects = (state as any)?.projects ?? [];
   const running = (state as any)?.running ?? null;
 
-  // 8 Wochen: oben 4, unten 4. Aktuelle Woche oben 2. von links
   const { topWeeks, bottomWeeks } = useMemo(() => {
     const now = new Date();
-    const cw = startOfWeekMondayUTC(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)));
+    const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0));
+    const cw = startOfWeekMondayUTC(todayUTC);
     const top = [addDays(cw, -7), cw, addDays(cw, 7), addDays(cw, 14)];
     const bot = [addDays(cw, 21), addDays(cw, 28), addDays(cw, 35), addDays(cw, 42)];
     return { topWeeks: top, bottomWeeks: bot };
@@ -368,12 +386,6 @@ export default function Board({ state, setState, ms }: Props) {
     return m;
   }, [projects]);
 
-  function meisterColorForProject(projektId: string): string {
-    const p = projectById.get(String(projektId));
-    const meisterId = pickPlannerMeisterId(p);
-    return meisterColorClass(meisterId);
-  }
-
   const projTotals = useMemo(() => extractProjectTotals(state as any), [state]);
   const empDayProjIdx = useMemo(() => extractEmployeeDayProjectMinutes(state as any), [state]);
 
@@ -401,39 +413,139 @@ export default function Board({ state, setState, ms }: Props) {
     return out;
   }, [activeProjects, layout, mitarbeiter]);
 
-  const blocks: Block[] = useMemo(() => {
+  /**
+   * Dynamische Dauer in Tagen (Mo–Sa Raster):
+   * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
+   * - Tage mit Buchung: Kapazität = BASE_CAP_MIN * workerCountThatDay
+   * - Tage ohne Buchung: workerCount = 1 (Default)
+   * - Samstag zählt wie normal, ABER: wenn Samstag keine Buchung hat, dann wird er als "Pause" übersprungen
+   *   (wie dein Strahl-Rule). Dadurch kann sich die Dauer "über Samstag" nach hinten schieben.
+   */
+  function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
+    if (minutesTarget <= 0) return 1;
+
+    let remain = minutesTarget;
+    let cols = 0;
+
+    // wir begrenzen hart, damit nichts explodiert
+    const MAX_COLS = COLS * 2; // über 2 Reihen hinaus wird visuell eh abgeschnitten
+    for (let i = 0; i < MAX_COLS; i++) {
+      const dayIso = isoDate(addDays(parseIso(startIso), i));
+      const key = `${projectId}__${dayIso}`;
+
+      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
+      const saturday = parseIso(dayIso).getUTCDay() === 6;
+
+      // Samstag optisch/technisch als Pause, wenn nicht gebucht
+      if (saturday && bookedThatDay <= 0) {
+        cols++;
+        continue;
+      }
+
+      const workers = projTotals.dayWorkers.get(key);
+      const workersCount = workers && workers.size > 0 ? Math.max(1, workers.size) : 1;
+
+      const dayCap = BASE_CAP_MIN * workersCount;
+      const take = Math.min(remain, dayCap);
+      remain -= take;
+
+      cols++;
+      if (remain <= 0) break;
+    }
+
+    return Math.max(1, cols);
+  }
+
+  // Blocks: echter Start + dynamische Länge
+  const rawBlocks: Block[] = useMemo(() => {
     if (mitarbeiter.length === 0) return [];
 
     return activeProjects.map((p: any) => {
       const pid = String(p.id);
-
       const meisterId = pickPlannerMeisterId(p);
-      const pos = layout[pid] ?? autoFallback[pid];
 
+      const pos = layout[pid] ?? autoFallback[pid];
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
       const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
 
       const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
-      const hours = safeNumber(p.kalkStunden);
-      const days = Math.max(1, Math.ceil(hours / 8));
-      const spanCols = clamp(days, 1, COLS * 2); // max 2 Reihen
+      const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
+
+      // Ziel-Minuten: verlängert wenn über Kalk
+      const minutesTarget = Math.max(planMinuten, bookedMinuten);
+
+      // Planung -> ISO
+      const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
+
+      // Echter Start (erste Buchung) verschiebt das ganze Projekt
+      const firstIso = projTotals.firstIso.get(pid) ?? null;
+      const offset = firstIso ? diffDaysIso(plannedStartIso, firstIso) : 0;
+      const startColTop = clamp(plannedStartColTop + offset, 0, COLS - 1);
+
+      // StartIso des Blocks (für Dauerberechnung)
+      const startIso = firstIso ?? plannedStartIso;
+
+      // Dynamische Dauer in Cols (verkürzt durch Parallelität, verlängert bei Überschreitung)
+      const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
       return {
         id: pid,
         name: String(p.name ?? "Projekt"),
         rowId,
-        plannedStartColTop,
+        startColTop,
         spanCols,
         meisterId,
         planMinuten,
+        firstIso,
       };
     });
-  }, [activeProjects, layout, autoFallback, mitarbeiter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+
+  /**
+   * Ketten-Layout:
+   * - Projekte pro row nach startColTop sortieren
+   * - erstes Projekt bleibt, alle folgenden werden direkt dahinter gesetzt
+   * => dadurch rutschen Folgeprojekte automatisch mit, wenn sich span verkürzt/verlängert
+   */
+  const blocks: Block[] = useMemo(() => {
+    const byRow = new Map<string, Block[]>();
+    for (const b of rawBlocks) {
+      if (!byRow.has(b.rowId)) byRow.set(b.rowId, []);
+      byRow.get(b.rowId)!.push({ ...b });
+    }
+
+    const out: Block[] = [];
+    for (const [rowId, arr] of byRow.entries()) {
+      const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
+
+      let cursor = 0;
+      for (let i = 0; i < sorted.length; i++) {
+        const b = sorted[i];
+
+        if (i === 0) {
+          // erstes Projekt bleibt an seinem Start
+          cursor = clamp(b.startColTop, 0, COLS - 1) + b.spanCols;
+          out.push(b);
+          continue;
+        }
+
+        // Folgeprojekte: direkt hinter das vorherige
+        const newStart = clamp(cursor, 0, COLS - 1);
+        b.startColTop = newStart;
+        cursor = newStart + b.spanCols;
+
+        out.push(b);
+      }
+    }
+
+    return out;
+  }, [rawBlocks]);
 
   function splitBlock(b: Block): BlockPart[] {
     const parts: BlockPart[] = [];
 
-    const topStart = b.plannedStartColTop;
+    const topStart = b.startColTop;
     const topAvail = Math.max(0, COLS - topStart);
     const topSpan = Math.min(b.spanCols, topAvail);
 
@@ -449,6 +561,7 @@ export default function Board({ state, setState, ms }: Props) {
         meisterId: b.meisterId,
         planMinuten: b.planMinuten,
         relStart: 0,
+        firstIso: b.firstIso,
       });
     }
 
@@ -465,6 +578,7 @@ export default function Board({ state, setState, ms }: Props) {
         meisterId: b.meisterId,
         planMinuten: b.planMinuten,
         relStart: topSpan,
+        firstIso: b.firstIso,
       });
     }
 
@@ -483,20 +597,10 @@ export default function Board({ state, setState, ms }: Props) {
     return m;
   }, [blockParts]);
 
-  const plannedStartIsoByProject = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const b of blocks) {
-      const d = dateForCol(0, clamp(b.plannedStartColTop, 0, COLS - 1));
-      m.set(String(b.id), isoDate(d));
-    }
-    return m;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocks]);
-
-  // Drag & Drop
+  // Drag & Drop: speichert weiterhin "Planung". Kettenlayout wird darüber gelegt.
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  function saveLayout(projectId: string, nextPos: LayoutPos) {
+  function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number }) {
     setState((s) => {
       const next = structuredClone(s) as any;
       if (!next.boardLayout) next.boardLayout = {};
@@ -515,30 +619,13 @@ export default function Board({ state, setState, ms }: Props) {
     setDraggingId(null);
   }
 
-  function onDropOnLane(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
+  function onDropOnRow(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
     e.preventDefault();
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
-
-    // Planung oben verankert
     if (target.weekRow !== 0) return;
 
-    const b = blocks.find((x) => String(x.id) === String(projectId));
-    const spanCols = b ? b.spanCols : 1;
-
-    const existingTopParts = blockParts
-      .filter(
-        (p) =>
-          p.weekRow === 0 &&
-          String(p.rowId) === String(target.rowId) &&
-          String(p.projectId) !== String(projectId)
-      )
-      .map((p) => ({ startCol: p.startCol, span: p.span }));
-
-    // Fortlaufend: nächste freie Stelle ab Drop-Spalte
-    const snappedCol = findNextFreeStartCol(target.col, spanCols, existingTopParts, COLS);
-
-    saveLayout(projectId, { rowId: String(target.rowId), startCol: snappedCol });
+    saveLayout(projectId, { rowId: String(target.rowId), startCol: clamp(target.col, 0, COLS - 1) });
     setDraggingId(null);
   }
 
@@ -558,55 +645,180 @@ export default function Board({ state, setState, ms }: Props) {
     sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
   }, [running?.projektId, blockParts]);
 
-  // ===== DEBUG (auto) =====
-  const debug = useMemo(() => {
-    const all = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
-    const arbeits = all.filter((b) => b && typeof b === "object" && b.art === "arbeit");
+  // --------- Buchungen packen ----------
+  function packDaySegments(rowId: string, weekRow: 0 | 1): PackedSeg[] {
+    const out: PackedSeg[] = [];
 
-    const sorted = arbeits
-      .slice()
-      .sort(
-        (a, b) =>
-          (safeNumber(b.endeTs) - safeNumber(a.endeTs)) || (safeNumber(b.startTs) - safeNumber(a.startTs))
+    for (let col = 0; col < COLS; col++) {
+      const iso = isoDate(dateForCol(weekRow, col));
+      const dayKey = `${rowId}__${iso}`;
+
+      const entries = empDayProjIdx.get(dayKey) ?? [];
+      if (entries.length === 0) continue;
+
+      const m = mitarbeiter.find((x: any) => String(x.id) === String(rowId));
+      const soll = sollMinutenFor(m, iso);
+      const denom = Math.max(1, soll > 0 ? soll : BASE_CAP_MIN);
+
+      const usedPxByLane = Array.from({ length: BOOKING_LANES }, () => 0);
+      const sorted = entries.slice().sort((a, b) => b.minuten - a.minuten);
+
+      for (const e of sorted) {
+        const proj = projectById.get(String(e.projektId));
+        const meisterId = pickPlannerMeisterId(proj);
+
+        const widthPxRaw = (Math.max(0, e.minuten) / denom) * CELL_W;
+        const widthPx = clamp(Math.round(widthPxRaw), 10, CELL_W - 4);
+
+        let lane = 0;
+        while (lane < BOOKING_LANES) {
+          const used = usedPxByLane[lane];
+          if (used + widthPx + 2 <= CELL_W - 2) break;
+          lane++;
+        }
+        if (lane >= BOOKING_LANES) lane = BOOKING_LANES - 1;
+
+        const leftPx = clamp(usedPxByLane[lane] + 2, 2, CELL_W - 2);
+        const maxW = Math.max(6, CELL_W - 2 - leftPx);
+        const w = Math.min(widthPx, maxW);
+
+        usedPxByLane[lane] = leftPx + w;
+
+        const pname = String(proj?.name ?? e.projektId);
+        const label = `${Math.round(e.minuten / 30) / 2}h`;
+        const tooltip = `${pname}\n${iso}\nIst: ${minutesToHM(e.minuten)}`;
+        const colorClass = pickColorForProject(String(e.projektId), meisterId);
+
+        out.push({
+          key: `${dayKey}__${e.projektId}__${lane}__${leftPx}`,
+          col,
+          lane,
+          leftPx,
+          widthPx: w,
+          label,
+          tooltip,
+          colorClass,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  // ===== Projekt-Fortschritt-Overlay (wie bisher: schneller bei parallel, visuell max 1 Tagbreite) =====
+  function renderProjectProgressOverlay(p: BlockPart) {
+    const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
+    const planMin = Math.max(0, p.planMinuten);
+    const first = p.firstIso;
+    if (totalMin <= 0 || !first) return null;
+
+    const totalSpanCols = projectTotalSpanCols.get(String(p.projectId)) ?? Math.max(1, p.relStart + p.span);
+
+    let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
+    let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : 0;
+
+    const partsStartPx = p.relStart * CELL_W;
+    const partsEndPx = (p.relStart + p.span) * CELL_W;
+
+    const segs: Array<{ left: number; width: number; kind: "in" | "over"; colorNode: React.ReactNode }> = [];
+
+    const area =
+      projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
+    const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
+    const areaShares: Array<{ b: Bereich; share: number }> = [
+      { b: "maschine", share: area.maschine / areaTotal },
+      { b: "bank", share: area.bank / areaTotal },
+      { b: "lack", share: area.lack / areaTotal },
+      { b: "montage", share: area.montage / areaTotal },
+    ].filter((x) => x.share > 0.0001);
+
+    function renderInColor() {
+      if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;
+      return (
+        <div className="h-full w-full flex">
+          {areaShares.map((x, idx) => (
+            <div
+              key={`${x.b}_${idx}`}
+              className={`h-full ${bereichColorClass(x.b)}`}
+              style={{ width: `${x.share * 100}%` }}
+            />
+          ))}
+        </div>
       );
+    }
 
-    const last = sorted[0] ?? null;
-    const lastDatum = last ? String(last.datum ?? "") : "";
-    const lastMitarbeiterId = last ? String(last.mitarbeiterId ?? "") : "";
-    const lastProjektId = last ? String(last.projektId ?? "") : "";
-    const lastMinuten = last ? (safeNumber(last.minuten) || safeNumber(last.stunden) * 60 || 0) : 0;
+    for (let dayIndex = 0; dayIndex < totalSpanCols; dayIndex++) {
+      if (remainIn <= 0 && remainOver <= 0) break;
 
-    const key = lastDatum && lastMitarbeiterId ? `${lastMitarbeiterId}__${lastDatum}` : "";
-    const hits = key ? (empDayProjIdx.get(key) ?? []).length : 0;
+      const dayStartPx = dayIndex * CELL_W;
+      const dayEndPx = dayStartPx + CELL_W;
 
-    const last12 = sorted.slice(0, 12).map((x) => ({
-      datum: String(x?.datum ?? ""),
-      mitarbeiterId: String(x?.mitarbeiterId ?? ""),
-      projektId: String(x?.projektId ?? ""),
-      minuten: Math.max(0, Math.round(safeNumber(x?.minuten) || safeNumber(x?.stunden) * 60 || 0)),
-    }));
+      const partVisibleStart = Math.max(partsStartPx, dayStartPx);
+      const partVisibleEnd = Math.min(partsEndPx, dayEndPx);
+      if (partVisibleEnd - partVisibleStart <= 0) continue;
 
-    return {
-      totalAll: all.length,
-      totalArbeits: arbeits.length,
-      last,
-      lastDatum,
-      lastMitarbeiterId,
-      lastProjektId,
-      lastMinuten,
-      key,
-      hits,
-      colTop: lastDatum ? colForIso(0, lastDatum) : null,
-      colBottom: lastDatum ? colForIso(1, lastDatum) : null,
-      last12,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, empDayProjIdx]);
-  // ===== DEBUG END =====
+      const dayIso = isoDate(addDays(parseIso(first), dayIndex));
+      const key = `${p.projectId}__${dayIso}`;
+      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
+
+      const saturday = parseIso(dayIso).getUTCDay() === 6;
+      if (saturday && bookedThatDay <= 0) continue;
+
+      let workersCount = 1;
+      const workers = projTotals.dayWorkers.get(key);
+      if (workers && workers.size > 0) workersCount = Math.max(1, workers.size);
+
+      const dayMaxProgressMin = BASE_CAP_MIN * workersCount;
+
+      const takeIn = remainIn > 0 ? Math.min(remainIn, dayMaxProgressMin) : 0;
+      const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayMaxProgressMin) : 0;
+
+      const used = takeIn > 0 ? takeIn : takeOver;
+      if (used <= 0) continue;
+
+      const w = clamp(Math.round((used / BASE_CAP_MIN) * CELL_W), 2, CELL_W);
+
+      const segLeft = Math.max(partVisibleStart, dayStartPx);
+      const segRight = Math.min(partVisibleEnd, dayStartPx + w);
+      const segW = segRight - segLeft;
+
+      if (segW > 0) {
+        segs.push({
+          left: segLeft - partsStartPx,
+          width: segW,
+          kind: takeIn > 0 ? "in" : "over",
+          colorNode: takeIn > 0 ? renderInColor() : null,
+        });
+      }
+
+      if (takeIn > 0) remainIn -= takeIn;
+      else remainOver -= takeOver;
+    }
+
+    if (segs.length === 0) return null;
+
+    return (
+      <>
+        {segs.map((s, idx) => {
+          if (s.kind === "in") {
+            return (
+              <div key={idx} className="absolute top-0 bottom-0" style={{ left: s.left, width: s.width }}>
+                {s.colorNode}
+                <div className="absolute inset-0 bg-blue-900/15" />
+              </div>
+            );
+          }
+          return (
+            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
+          );
+        })}
+      </>
+    );
+  }
 
   function renderSection(weekRow: 0 | 1, weeks4: Date[], scrollRef: React.RefObject<HTMLDivElement>) {
     const parts = blockParts.filter((p) => p.weekRow === weekRow);
-    const activeCol = running?.datum ? colForIso(weekRow, running.datum) : null;
+    const activeCol = running?.datum ? colForIso(weekRow, String(running.datum).slice(0, 10)) : null;
 
     return (
       <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
@@ -670,77 +882,75 @@ export default function Board({ state, setState, ms }: Props) {
             {mitarbeiter.map((m: any) => {
               const rowId = String(m.id);
               const rowParts = parts.filter((p) => String(p.rowId) === rowId);
-
-              const laneByKey = assignLanes(
-                rowParts.map((p) => ({ key: p.key, startCol: p.startCol, span: p.span })),
-                LANES
-              );
+              const packed = packDaySegments(rowId, weekRow);
 
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
                   <div
                     className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-sm text-neutral-100"
-                    style={{ width: NAME_COL_W, height: LANES * LANE_H }}
+                    style={{ width: NAME_COL_W, height: ROW_H }}
                   >
                     <div className="truncate">{m.name}</div>
                   </div>
 
-                  <div className="relative" style={{ width: COLS * CELL_W, height: LANES * LANE_H }}>
-                    {/* Raster + Drop + Tages-Spuren */}
+                  <div className="relative" style={{ width: COLS * CELL_W, height: ROW_H }}>
+                    {/* Raster + Drop-Zellen */}
                     <div className="absolute inset-0">
-                      {Array.from({ length: LANES }).map((_, lane) => (
-                        <div key={lane} className="flex" style={{ height: LANE_H }}>
-                          {Array.from({ length: COLS }).map((_, col) => {
-                            const isWeekBoundary = col % 6 === 0;
-                            const isActive = activeCol === col;
+                      {Array.from({ length: COLS }).map((_, col) => {
+                        const isWeekBoundary = col % 6 === 0;
+                        const isActive = activeCol === col;
 
-                            const iso = isoDate(dateForCol(weekRow, col));
-                            const dayKey = `${rowId}__${iso}`;
-                            const entries = empDayProjIdx.get(dayKey) ?? [];
-
-                            const soll = sollMinutenFor(m, iso);
-                            const denom = Math.max(1, soll > 0 ? soll : 480);
-
-                            const shown = entries.slice(0, 4);
-                            const rest = entries.length - shown.length;
-
-                            return (
+                        return (
+                          <div
+                            key={col}
+                            className={`absolute top-0 bottom-0 border-r border-neutral-800 ${
+                              isWeekBoundary ? "bg-neutral-900/35" : "bg-neutral-950"
+                            } ${isActive ? "bg-blue-500/5" : ""}`}
+                            style={{ left: col * CELL_W, width: CELL_W }}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
+                          >
+                            <div
+                              className="absolute left-0 right-0 border-t border-neutral-800/70"
+                              style={{ top: PROJECT_BAND_H }}
+                            />
+                            {Array.from({ length: BOOKING_LANES - 1 }).map((__, i) => (
                               <div
-                                key={col}
-                                className={`relative border-r border-neutral-800 ${
-                                  isWeekBoundary ? "bg-neutral-900/35" : "bg-neutral-950"
-                                } ${isActive ? "bg-blue-500/5" : ""}`}
-                                style={{ width: CELL_W, height: LANE_H }}
-                                onDragOver={(e) => e.preventDefault()}
-                                onDrop={(e) => onDropOnLane(e, { rowId, weekRow, col })}
-                              >
-                                {/* Tages-Spuren: nur in Lane 0 */}
-                                {lane === 0 && entries.length > 0 ? (
-                                  <div className="absolute left-1 right-1 bottom-1 flex flex-col gap-1 pointer-events-none">
-                                    {shown.map((e, i) => {
-                                      const pct = clamp((e.minuten / denom) * 100, 2, 100);
-                                      const colorClass = meisterColorForProject(e.projektId);
-                                      const pname = String(projectById.get(String(e.projektId))?.name ?? e.projektId);
-
-                                      return (
-                                        <div
-                                          key={`${e.projektId}_${i}`}
-                                          className="h-1.5 rounded bg-neutral-800 overflow-hidden"
-                                          title={`${pname} · ${minutesToHM(e.minuten)}`}
-                                        >
-                                          <div className={`h-full ${colorClass}`} style={{ width: `${pct}%` }} />
-                                        </div>
-                                      );
-                                    })}
-                                    {rest > 0 ? <div className="text-[9px] text-neutral-400">+{rest}</div> : null}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))}
+                                key={i}
+                                className="absolute left-0 right-0 border-t border-neutral-800/40"
+                                style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
+                              />
+                            ))}
+                          </div>
+                        );
+                      })}
                     </div>
+
+                    {/* Buchungs-Segmente */}
+                    {packed.map((seg) => {
+                      const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
+                      const leftPx = seg.col * CELL_W + seg.leftPx;
+
+                      return (
+                        <div
+                          key={seg.key}
+                          className="absolute z-10 rounded-md border border-neutral-800 overflow-hidden"
+                          style={{
+                            top: topPx,
+                            left: leftPx,
+                            width: seg.widthPx,
+                            height: BOOKING_LANE_H - 8,
+                          }}
+                          title={seg.tooltip}
+                        >
+                          <div className={`absolute inset-0 ${seg.colorClass}`} />
+                          <div className="absolute inset-0 bg-neutral-950/55" />
+                          <div className="relative h-full flex items-center justify-center text-[10px] font-semibold text-neutral-100 tabular-nums">
+                            {seg.label}
+                          </div>
+                        </div>
+                      );
+                    })}
 
                     {/* Projektblöcke */}
                     {rowParts.map((p) => {
@@ -748,67 +958,13 @@ export default function Board({ state, setState, ms }: Props) {
                       const isDragging = draggingId === p.projectId;
                       const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
 
-                      const lane = laneByKey.get(p.key) ?? 0;
-
                       const blockLeft = p.startCol * CELL_W + 2;
-                      const blockTop = lane * LANE_H + 2;
+                      const blockTop = 2;
                       const blockW = p.span * CELL_W - 4;
-                      const blockH = LANE_H - 4;
+                      const blockH = PROJECT_BAND_H - 4;
 
                       const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
                       const planMin = Math.max(0, p.planMinuten);
-                      const first = projTotals.firstIso.get(p.projectId) ?? null;
-
-                      const plannedStartIso =
-                        plannedStartIsoByProject.get(String(p.projectId)) ?? isoDate(dateForCol(0, 0));
-                      const startOffsetDays = first ? diffDaysIso(plannedStartIso, first) : 0;
-
-                      const totalSpanCols =
-                        projectTotalSpanCols.get(String(p.projectId)) ?? Math.max(1, p.relStart + p.span);
-
-                      const progressStartCol = clamp(startOffsetDays, 0, totalSpanCols);
-
-                      const filledCols =
-                        planMin > 0 ? Math.round((Math.min(totalMin, planMin) / planMin) * totalSpanCols) : 0;
-
-                      const overCols =
-                        planMin > 0 ? Math.round((Math.max(0, totalMin - planMin) / planMin) * totalSpanCols) : 0;
-
-                      const partStart = p.relStart;
-                      const partEnd = p.relStart + p.span;
-
-                      const plannedStart = progressStartCol;
-                      const plannedEnd = progressStartCol + filledCols;
-
-                      const partPlannedStart = Math.max(partStart, plannedStart);
-                      const partPlannedEnd = Math.min(partEnd, plannedEnd);
-                      const partPlannedLen = Math.max(0, partPlannedEnd - partPlannedStart);
-
-                      const overStart = plannedEnd;
-                      const overEnd = plannedEnd + overCols;
-
-                      const partOverStart = Math.max(partStart, overStart);
-                      const partOverEnd = Math.min(partEnd, overEnd);
-                      const partOverLen = Math.max(0, partOverEnd - partOverStart);
-
-                      const plannedLeftPx = (partPlannedStart - partStart) * CELL_W;
-                      const plannedWidthPx = partPlannedLen * CELL_W;
-
-                      const overLeftPx = (partOverStart - partStart) * CELL_W;
-                      const overWidthPx = partOverLen * CELL_W;
-
-                      const showAnyProgress =
-                        totalMin > 0 && first != null && (partPlannedLen > 0 || partOverLen > 0);
-
-                      const area =
-                        projTotals.areaMin.get(p.projectId) ?? { maschine: 0, bank: 0, lack: 0, montage: 0 };
-                      const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
-                      const areaShares: Array<{ b: Bereich; share: number }> = [
-                        { b: "maschine", share: area.maschine / areaTotal },
-                        { b: "bank", share: area.bank / areaTotal },
-                        { b: "lack", share: area.lack / areaTotal },
-                        { b: "montage", share: area.montage / areaTotal },
-                      ].filter((x) => x.share > 0.0001);
 
                       return (
                         <div
@@ -816,7 +972,7 @@ export default function Board({ state, setState, ms }: Props) {
                           draggable
                           onDragStart={(e) => onDragStart(e, p.projectId)}
                           onDragEnd={onDragEnd}
-                          className={`absolute rounded-lg border overflow-hidden select-none ${
+                          className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
                             isDragging
                               ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
                               : isRunningProject
@@ -824,65 +980,54 @@ export default function Board({ state, setState, ms }: Props) {
                               : "border-orange-500/80 bg-neutral-900 text-neutral-100"
                           }`}
                           style={{ top: blockTop, left: blockLeft, width: blockW, height: blockH }}
-                          title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}`}
+                          title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${
+                            p.firstIso ?? "—"
+                          }`}
                         >
-                          {/* Raster im Block */}
+                          {/* Raster im Block + Samstag-Cut (kalenderkorrekt über Board-Datum) */}
                           <div className="absolute inset-0 flex">
-                            {Array.from({ length: p.span }).map((_, i) => (
-                              <div
-                                key={i}
-                                className="h-full border-r border-neutral-800/60 bg-neutral-950"
-                                style={{ width: CELL_W }}
-                              />
-                            ))}
+                            {Array.from({ length: p.span }).map((_, i) => {
+                              const cellDate = dateForCol(p.weekRow, p.startCol + i);
+                              const isSat = cellDate.getUTCDay() === 6;
+
+                              return (
+                                <div
+                                  key={i}
+                                  className={`relative h-full border-r border-neutral-800/60 ${
+                                    isSat ? "bg-neutral-900" : "bg-neutral-950"
+                                  }`}
+                                  style={{ width: CELL_W }}
+                                >
+                                  {isSat ? (
+                                    <>
+                                      <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
+                                      <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
+                                      <div
+                                        className="absolute inset-0 opacity-40"
+                                        style={{
+                                          backgroundImage:
+                                            "repeating-linear-gradient(135deg, rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 4px, rgba(0,0,0,0) 4px, rgba(0,0,0,0) 10px)",
+                                        }}
+                                      />
+                                    </>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
                           </div>
 
                           {/* Fortschritt */}
-                          {showAnyProgress ? (
-                            <>
-                              <div className="absolute top-0 bottom-0" style={{ left: plannedLeftPx, width: plannedWidthPx }}>
-                                <div className="h-full w-full flex">
-                                  {areaShares.length > 0 ? (
-                                    areaShares.map((x, idx) => (
-                                      <div
-                                        key={`${x.b}_${idx}`}
-                                        className={`h-full ${bereichColorClass(x.b)}`}
-                                        style={{ width: `${x.share * 100}%` }}
-                                      />
-                                    ))
-                                  ) : (
-                                    <div className="h-full w-full bg-blue-600" />
-                                  )}
-                                </div>
-                                <div className="absolute inset-0 bg-blue-900/15" />
-                              </div>
+                          <div className="absolute inset-0">{renderProjectProgressOverlay(p)}</div>
 
-                              {partOverLen > 0 ? (
-                                <div
-                                  className="absolute top-0 bottom-0 bg-red-600"
-                                  style={{ left: overLeftPx, width: overWidthPx }}
-                                  title={`Überschritten: ${minutesToHM(Math.max(0, totalMin - planMin))}`}
-                                />
-                              ) : null}
-                            </>
-                          ) : null}
-
-                          {/* Label am Anfang */}
+                          {/* Label nur am Startteil */}
                           {p.relStart === 0 ? (
                             <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
                                 <div className={`h-3.5 w-3.5 rounded-sm ${meisterBadge}`} />
                                 <div className="truncate text-[12px] font-semibold text-neutral-100">{p.name}</div>
-                                {totalMin > 0 ? (
-                                  <div className="ml-2 text-[10px] text-neutral-300">
-                                    {minutesToHM(totalMin)} / {minutesToHM(planMin)}
-                                  </div>
-                                ) : (
-                                  <div className="ml-2 text-[10px] text-neutral-500">noch keine Buchung</div>
-                                )}
-                                {isRunningProject ? (
-                                  <div className="ml-2 text-[10px] font-semibold text-blue-300">● läuft</div>
-                                ) : null}
+                                <div className="ml-2 text-[10px] text-neutral-300 whitespace-nowrap">
+                                  {minutesToHM(totalMin)} / {minutesToHM(planMin)}
+                                </div>
                               </div>
                             </div>
                           ) : null}
@@ -901,59 +1046,11 @@ export default function Board({ state, setState, ms }: Props) {
 
   return (
     <div className="flex flex-col gap-3 relative">
-      {/* DEBUG PANEL – AUTO */}
-      <div className="fixed top-4 left-4 z-[9999] bg-white text-black text-xs rounded-lg border shadow-lg p-3 w-[380px] max-h-[80vh] overflow-auto">
-        <div className="font-bold mb-2">Board Debug (AUTO)</div>
-
-        <div>
-          <b>Board Range:</b> {isoDate(topWeeks[0])} … {isoDate(addDays(bottomWeeks[3], 5))}
-        </div>
-
-        <div className="mt-2">
-          <b>buchungen total:</b> {debug.totalAll}
-        </div>
-        <div>
-          <b>arbeits-buchungen:</b> {debug.totalArbeits}
-        </div>
-
-        <div className="mt-2">
-          <b>Last Arbeit:</b>{" "}
-          {debug.last
-            ? `${debug.lastDatum} | m=${debug.lastMitarbeiterId} | p=${debug.lastProjektId} | ${minutesToHM(debug.lastMinuten)}`
-            : "—"}
-        </div>
-
-        <div className="mt-2">
-          <b>Auto Key:</b> {debug.key || "—"}
-        </div>
-        <div>
-          <b>Auto Hits:</b> {debug.hits}
-        </div>
-        <div>
-          <b>colForIso(top/bottom):</b> {String(debug.colTop)} / {String(debug.colBottom)}
-        </div>
-
-        <div className="mt-3 font-semibold">Letzte 12 Arbeitsbuchungen</div>
-        <div className="mt-1 space-y-1">
-          {debug.last12.length === 0 ? (
-            <div className="text-neutral-600">Keine Arbeitsbuchungen in state.buchungen.</div>
-          ) : (
-            debug.last12.map((x, i) => (
-              <div key={i} className="border rounded px-2 py-1">
-                <div>
-                  <b>{x.datum}</b> | m={x.mitarbeiterId} | p={x.projektId}
-                </div>
-                <div className="text-neutral-700">{minutesToHM(x.minuten)}</div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
       {renderSection(0, topWeeks, scrollTopRef)}
       {renderSection(1, bottomWeeks, scrollBottomRef)}
       <div className="text-xs text-neutral-500">
-        Drag&Drop plant fortlaufend (nächste freie Stelle) und darf operative Zeile ändern. Tages-Spuren zeigen Buchungen je Mitarbeiter.
+        Neu: Projektblock-Länge ist dynamisch (verkürzt bei Parallelität, verlängert bei Überschreitung) und Folgeprojekte
+        rutschen in der Zeile automatisch mit.
       </div>
     </div>
   );

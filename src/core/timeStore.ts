@@ -46,19 +46,17 @@ function str(v: unknown, fallback = ""): string {
   return s.trim() ? s : fallback;
 }
 
-function todayIso(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+// ✅ UTC-kalenderfestes "YYYY-MM-DD"
+function isoFromDateUTC(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
-function isoFromDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+// ✅ UTC-"heute"
+function todayIso(): string {
+  return isoFromDateUTC(new Date());
 }
 
 /**
@@ -81,12 +79,12 @@ function normalizeIsoDatum(v: unknown): string {
 
   if (typeof v === "number" && Number.isFinite(v) && v > 0) {
     const d = new Date(v);
-    if (Number.isFinite(d.getTime())) return isoFromDate(d);
+    if (Number.isFinite(d.getTime())) return isoFromDateUTC(d);
     return "";
   }
 
   if (v instanceof Date) {
-    if (Number.isFinite(v.getTime())) return isoFromDate(v);
+    if (Number.isFinite(v.getTime())) return isoFromDateUTC(v);
     return "";
   }
 
@@ -218,7 +216,7 @@ export function loadState(): State {
           projektId: str((running as any).projektId),
           bereich: (running as any).bereich as Bereich,
           startTs: num((running as any).startTs) || Date.now(),
-          datum: str((running as any).datum, todayIso()),
+          datum: str(normalizeIsoDatum((running as any).datum) || todayIso(), todayIso()),
           note: (running as any).note != null ? str((running as any).note) : undefined,
         };
 
@@ -236,8 +234,7 @@ export function loadState(): State {
         boardLayout: (parsed as any).boardLayout ?? undefined,
       };
 
-      // Optional aber hilfreich: reparierte Daten direkt zurückschreiben,
-      // damit ab jetzt alles sauber ist.
+      // reparierte Daten zurückschreiben
       saveState(out);
 
       return out;
@@ -282,11 +279,13 @@ export function startTimer(
   s: State,
   args: { mitarbeiterId: string; projektId: string; bereich: Bereich; datum: string; note?: string }
 ) {
+  const fixedDatum = normalizeIsoDatum(args.datum) || todayIso();
+
   s.running = {
     mitarbeiterId: str(args.mitarbeiterId),
     projektId: str(args.projektId),
     bereich: args.bereich,
-    datum: str(args.datum, todayIso()),
+    datum: fixedDatum,
     startTs: Date.now(),
     note: args.note != null ? str(args.note) : undefined,
   };
@@ -299,12 +298,11 @@ export function stopTimer(s: State, datumOverride?: string) {
   const endTs = Date.now();
   const rawMinutes = Math.round((endTs - s.running.startTs) / 60000);
 
-  // 🔒 Narrensicher: mindestens 1 Minute bei jeder Arbeit
+  // 🔒 mindestens 1 Minute bei jeder Arbeit
   const minutes = Math.max(1, rawMinutes);
 
-  // Variante A: Datum = Tag des Stop-Moments (heute),
-  // außer bewusstes Nachtragen per Override
-  const datum = str(datumOverride ?? todayIso(), todayIso());
+  // Datum override ebenfalls sauber normalisieren (oder heute UTC)
+  const datum = normalizeIsoDatum(datumOverride) || todayIso();
 
   s.buchungen.push({
     id: uid(),
@@ -323,7 +321,6 @@ export function stopTimer(s: State, datumOverride?: string) {
   saveState(s);
 }
 
-
 // --- Status -----------------------------------------------------------------
 
 export function upsertStatus(
@@ -336,11 +333,13 @@ export function upsertStatus(
     note?: string;
   }
 ) {
-  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), str(args.datum));
+  const fixedDatum = normalizeIsoDatum(args.datum) || todayIso();
+
+  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), fixedDatum);
   s.buchungen.push({
     id: uid(),
     mitarbeiterId: str(args.mitarbeiterId),
-    datum: str(args.datum),
+    datum: fixedDatum,
     art: args.art,
     minuten: args.minuten == null ? null : Math.max(0, num(args.minuten) || 0),
     note: args.note != null ? str(args.note) : undefined,
@@ -349,7 +348,8 @@ export function upsertStatus(
 }
 
 export function clearStatus(s: State, args: { mitarbeiterId: string; datum: string }) {
-  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), str(args.datum));
+  const fixedDatum = normalizeIsoDatum(args.datum) || todayIso();
+  s.buchungen = ensureOneStatusPerDay(s.buchungen, str(args.mitarbeiterId), fixedDatum);
   saveState(s);
 }
 
