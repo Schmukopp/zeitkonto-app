@@ -98,3 +98,78 @@ export function minutesToHoursString(min: number) {
   const m = Math.abs(min % 60);
   return `${h}:${String(m).padStart(2, "0")}`;
 }
+import type { Mitarbeiter } from "./mitarbeiterStore";
+import { urlaubswertForIsoDate } from "./workModel";
+
+/**
+ * Deterministische Kontenberechnung aus Buchungen:
+ * - UrlaubstageVerbraucht = Summe(urlaubswert) für art="urlaub"
+ * - ÜberstundenSaldo (h) = Summe(deltaUeberstundenMinuten) / 60
+ *
+ * Wichtig:
+ * - Wir rechnen bewusst aus Buchungen, damit kein Drift entsteht.
+ * - Zeitraum: standardmäßig alle Buchungen. (Optional später: nur aktuelles Kalenderjahr)
+ */
+export function recomputeMitarbeiterKonten(args: {
+  mitarbeiter: Mitarbeiter[];
+  buchungen: Buchung[];
+}): Mitarbeiter[] {
+  const { mitarbeiter, buchungen } = args;
+
+  // Index: pro Mitarbeiter alle (datum -> status) + Sollminuten je Datum brauchen wir aus modell.
+  // Wir laufen pragmatisch über alle Statusbuchungen und alle Arbeitstage, die es gibt.
+  // Für Überstunden nehmen wir calcDaySummary (damit Regeln zentral sind).
+
+  // Sammle alle Tage pro Mitarbeiter, die irgendwo vorkommen (Arbeit oder Status)
+  const daysByM = new Map<string, Set<string>>();
+  for (const b of buchungen) {
+    const mid = (b as any).mitarbeiterId;
+    const d = (b as any).datum;
+    if (!mid || !d) continue;
+    if (!daysByM.has(mid)) daysByM.set(mid, new Set());
+    daysByM.get(mid)!.add(String(d));
+  }
+
+  return mitarbeiter.map((m) => {
+    const days = daysByM.get(m.id) ?? new Set<string>();
+
+    let sumDeltaUeMin = 0;
+    let sumUrlaubTage = 0;
+
+    for (const datum of days) {
+      // Soll-Minuten aus Wochenmodell
+      const sollMinuten = (() => {
+        // workModel: Sa/So => 0, Mo–Fr => modell.tage[tag].sollMinuten
+        // Wir nutzen deine bestehende Logik indirekt: in timeStore/Heute wird sollMinuten über sollMinutenForIsoDate gebildet.
+        // Hier rechnen wir direkt:
+        const js = new Date(datum + "T00:00:00").getDay(); // 0=So..6=Sa
+        const map: Record<number, keyof typeof m.modell.tage> = { 1: "mo", 2: "di", 3: "mi", 4: "do", 5: "fr" };
+        const t = map[js];
+        return t ? (m.modell.tage[t]?.sollMinuten ?? 0) : 0;
+      })();
+
+      const day = calcDaySummary({
+        datum,
+        mitarbeiterId: m.id,
+        sollMinuten,
+        buchungen,
+      });
+
+      sumDeltaUeMin += day.deltaUeberstundenMinuten;
+
+      if (day.statusArt === "urlaub") {
+        // Urlaub in TAGEN nach Urlaubswert (0..1)
+        sumUrlaubTage += urlaubswertForIsoDate(m.modell, datum);
+      }
+    }
+
+    const nextSaldoH = Math.round((sumDeltaUeMin / 60) * 100) / 100; // 2 Dezimalstellen
+    const nextUrlaubVerb = Math.round(sumUrlaubTage * 100) / 100;
+
+    return {
+      ...m,
+      ueberstundenSaldo: nextSaldoH,
+      urlaubstageVerbraucht: nextUrlaubVerb,
+    };
+  });
+}
