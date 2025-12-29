@@ -69,9 +69,11 @@
       "main": "electron/main.cjs"
     },
 
-    "win": {
-      "target": ["nsis"]
-    },
+  "win": {
+  "target": ["nsis"],
+  "signAndEditExecutable": false,
+  "verifyUpdateCodeSignature": false
+},
 
     "nsis": {
       "oneClick": false,
