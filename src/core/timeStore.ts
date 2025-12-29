@@ -408,7 +408,7 @@ export function createProject(s: State, name = "Neues Projekt"): State {
     istMaterialEur: 0,
   };
 
-  s.projects = [...(s.projects ?? []), p];
+  s.projects = [p, ...(s.projects ?? [])];
   saveState(s);
   return s;
 }
