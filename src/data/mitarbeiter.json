@@ -1,0 +1,45 @@
+[
+  {
+    "id": "Don",
+    "name": "Don Ehrenbrink",
+    "modell": {
+      "typ": "wochentage",
+      "tage": {
+        "mo": { "sollStunden": 10, "urlaubswert": 1.0 },
+        "di": { "sollStunden": 10, "urlaubswert": 1.0 },
+        "mi": { "sollStunden": 5,  "urlaubswert": 0.5 },
+        "do": { "sollStunden": 10, "urlaubswert": 1.0 },
+        "fr": { "sollStunden": 5,  "urlaubswert": 0.5 }
+      }
+    }
+  },
+  {
+    "id": "Lutz",
+    "name": "Lutz Stöver",
+    "modell": {
+      "typ": "wochentage",
+      "tage": {
+        "mo": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "di": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "mi": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "do": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "fr": { "sollStunden": 0, "urlaubswert": 0.0 }
+      }
+    }
+  },
+   {
+    "id": "Peter",
+    "name": "Peter Häusler",
+    "modell": {
+      "typ": "wochentage",
+      "tage": {
+        "mo": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "di": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "mi": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "do": { "sollStunden": 8, "urlaubswert": 1.0 },
+        "fr": { "sollStunden": 0, "urlaubswert": 0.0 }
+      }
+    }
+  }
+]
+

@@ -1,0 +1,16 @@
+[
+  { "mitarbeiterId": "Don",   "woche": "2025-W49", "istStunden": 38 },
+  { "mitarbeiterId": "Don",   "woche": "2025-W50", "istStunden": 40 },
+  { "mitarbeiterId": "Don",   "woche": "2025-W51", "istStunden": 35 },
+  { "mitarbeiterId": "Don",   "woche": "2025-W52", "istStunden": 42 },
+
+  { "mitarbeiterId": "Lutz",  "woche": "2025-W49", "istStunden": 30 },
+  { "mitarbeiterId": "Lutz",  "woche": "2025-W50", "istStunden": 32 },
+  { "mitarbeiterId": "Lutz",  "woche": "2025-W51", "istStunden": 32 },
+  { "mitarbeiterId": "Lutz",  "woche": "2025-W52", "istStunden": 28 },
+
+  { "mitarbeiterId": "Peter", "woche": "2025-W49", "istStunden": 32 },
+  { "mitarbeiterId": "Peter", "woche": "2025-W50", "istStunden": 32 },
+  { "mitarbeiterId": "Peter", "woche": "2025-W51", "istStunden": 32 },
+  { "mitarbeiterId": "Peter", "woche": "2025-W52", "istStunden": 36 }
+]
