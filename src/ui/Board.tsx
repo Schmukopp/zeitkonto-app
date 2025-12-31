@@ -767,15 +767,20 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
 
     const segs: Array<{ left: number; width: number; kind: "in" | "over"; colorNode: React.ReactNode | null }> = [];
 
-    const area =
+        const area =
       projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
-    const areaTotal = Math.max(1, area.maschine + area.bank + area.lack + area.montage);
+
+    const rawTotal = Math.max(0, (area.maschine ?? 0) + (area.bank ?? 0) + (area.lack ?? 0) + (area.montage ?? 0));
+    const areaTotal = Math.max(1, rawTotal);
+
     const areaShares: Array<{ b: Bereich; share: number }> = [
-  { b: "maschine" as Bereich, share: 0 },
-  { b: "bank" as Bereich, share: 0 },
-  { b: "lack" as Bereich, share: 0 },
-  { b: "montage" as Bereich, share: 0 },
-];
+      { b: "maschine", share: (area.maschine ?? 0) / areaTotal },
+      { b: "bank", share: (area.bank ?? 0) / areaTotal },
+      { b: "lack", share: (area.lack ?? 0) / areaTotal },
+      { b: "montage", share: (area.montage ?? 0) / areaTotal },
+    ].filter((x) => x.share > 0);
+
+
 
     function renderInColor() {
       if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;
