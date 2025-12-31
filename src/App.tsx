@@ -221,7 +221,8 @@ export default function App() {
         setSettings={setSettings}
       />
 
-      <div className="mx-auto max-w-6xl px-4 pt-20 pb-6">
+      <div className={tab === "board" ? "mx-auto max-w-none px-2 pt-20 pb-6" : "mx-auto max-w-6xl px-4 pt-20 pb-6"}>
+
         {tab === "admin" ? (
           <div className="flex flex-col gap-3">
             <AdminMitarbeiter ms={ms} setMs={setMs} />
