@@ -127,13 +127,21 @@ function diffDaysIso(fromIso: string, toIso: string) {
 }
 
 // ===== Robuste Feldzugriffe =====
+// Regel: Der Buchungstag ist immer YYYY-MM-DD am Anfang (keine Zeitzonen-Umrechnung)
 function pickIso(e: any): string {
   const cands = [e?.datum, e?.date, e?.iso, e?.day];
   for (const c of cands) {
-    if (typeof c === "string" && c.trim()) return c.trim().slice(0, 10);
+    if (typeof c !== "string") continue;
+    const s = c.trim();
+    if (!s) continue;
+
+    const head = s.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
   }
   return "";
 }
+
+
 
 function pickProjektId(e: any): string {
   const cands = [e?.projektId, e?.projectId, e?.projektID, e?.projectID, e?.pid];
@@ -480,16 +488,17 @@ export default function Board({ state, setState, ms }: Props) {
       // Ziel-Minuten: verlängert wenn über Kalk
       const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
-      // Planung -> ISO (aus Board-Grid)
+            // Planung -> ISO (aus Board-Grid)
       const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
 
-      // Echter Start (erste Buchung) verschiebt das ganze Projekt
+      // Echter Start (erste Buchung) setzt den Start direkt auf die passende Board-Spalte
       const firstIso = projTotals.firstIso.get(pid) ?? null;
-      const offset = firstIso ? diffDaysIso(plannedStartIso, firstIso) : 0;
-      const startColTop = clamp(plannedStartColTop + offset, 0, COLS - 1);
+      const firstColTop = firstIso ? colForIso(0, firstIso) : null;
+      const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
 
       // StartIso des Blocks (für Dauerberechnung)
       const startIso = firstIso ?? plannedStartIso;
+
 
       // Dynamische Dauer in Cols
       const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
