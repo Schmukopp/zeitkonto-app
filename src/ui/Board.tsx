@@ -446,12 +446,14 @@ export default function Board({ state, setState, ms }: Props) {
         continue;
       }
 
-      const workers = projTotals.dayWorkers.get(key);
-      const workersCount = workers && workers.size > 0 ? Math.max(1, workers.size) : 1;
+            // C2-Regel: echte Kompression nur über tatsächlich gebuchte Minuten
+      // - Wenn an dem Tag gebucht wurde: Fortschritt = bookedThatDay (egal wie viele Worker)
+      // - Wenn nicht gebucht wurde: Fortschritt = BASE_CAP_MIN (Default 1 Person)
+      const dayCap = bookedThatDay > 0 ? bookedThatDay : BASE_CAP_MIN;
 
-      const dayCap = BASE_CAP_MIN * workersCount;
       const take = Math.min(remain, dayCap);
       remain -= take;
+
 
       cols++;
       if (remain <= 0) break;
@@ -818,14 +820,13 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
       const isFriOrSat = dow === 5 || dow === 6;
       if (isFriOrSat && bookedThatDay <= 0) continue;
 
-      let workersCount = 1;
-      const workers = projTotals.dayWorkers.get(key);
-      if (workers && workers.size > 0) workersCount = Math.max(1, workers.size);
-
-      const dayCapMin = BASE_CAP_MIN * workersCount;
+           // C2-Regel: echte Kompression nur über tatsächlich gebuchte Minuten
+      // Wenn nichts gebucht: Default-Tag = BASE_CAP_MIN
+      const dayCapMin = bookedThatDay > 0 ? bookedThatDay : BASE_CAP_MIN;
 
       const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
       const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
+;
 
       const used = takeIn > 0 ? takeIn : takeOver;
       if (used <= 0) continue;
