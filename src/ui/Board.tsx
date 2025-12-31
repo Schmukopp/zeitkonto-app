@@ -321,8 +321,10 @@ type Block = {
   spanCols: number; // dynamisch: verkürzt/verlängert
   meisterId: string | null;
   planMinuten: number;
+  startIso: string; // Startdatum des Blocks (firstIso oder plannedStartIso)
   firstIso: string | null;
 };
+
 
 type BlockPart = {
   key: string;
@@ -449,18 +451,26 @@ export default function Board({ state, setState, ms }: Props) {
       const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
       const isFriOrSat = dow === 5 || dow === 6;
 
-      if (isFriOrSat && bookedThatDay <= 0) {
+            // Freitag + Samstag:
+      // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
+      // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
+      const dayCap = isFriOrSat
+        ? bookedThatDay
+        : bookedThatDay > 0
+          ? bookedThatDay
+          : BASE_CAP_MIN;
+
+      if (dayCap <= 0) {
         cols++;
         continue;
       }
 
-            // C2-Regel: echte Kompression nur über tatsächlich gebuchte Minuten
-      // - Wenn an dem Tag gebucht wurde: Fortschritt = bookedThatDay (egal wie viele Worker)
-      // - Wenn nicht gebucht wurde: Fortschritt = BASE_CAP_MIN (Default 1 Person)
-      const dayCap = bookedThatDay > 0 ? bookedThatDay : BASE_CAP_MIN;
-
       const take = Math.min(remain, dayCap);
       remain -= take;
+
+      cols++;
+      if (remain <= 0) break;
+
 
 
       cols++;
@@ -503,16 +513,19 @@ export default function Board({ state, setState, ms }: Props) {
       // Dynamische Dauer in Cols
       const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
-      return {
-        id: pid,
-        name: String(p.name ?? "Projekt"),
-        rowId,
-        startColTop,
-        spanCols,
-        meisterId,
-        planMinuten,
-        firstIso,
-      };
+           return {
+  id: pid,
+  name: String(p.name ?? "Projekt"),
+  rowId,
+  startColTop,
+  spanCols,
+  meisterId,
+  planMinuten,
+  startIso,
+  firstIso,
+};
+
+
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
@@ -533,22 +546,51 @@ export default function Board({ state, setState, ms }: Props) {
     for (const [rowId, arr] of byRow.entries()) {
       const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
 
-      let cursor = 0;
-      for (let i = 0; i < sorted.length; i++) {
-        const b = sorted[i];
+          let cursor = 0;
 
-        if (i === 0) {
-          cursor = clamp(b.startColTop, 0, COLS - 1) + b.spanCols;
-          out.push(b);
-          continue;
-        }
+    const visibleSpanColsFor = (blk: Block) => {
+      // Sichtbar = alle Tage außer Fr/Sa ohne Buchung
+      // (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
+      let lastVisible = -1;
+      const start = parseIso(String(blk.startIso));
 
-        const newStart = clamp(cursor, 0, COLS - 1);
-        b.startColTop = newStart;
-        cursor = newStart + b.spanCols;
+      for (let off = 0; off < blk.spanCols; off++) {
+        const dayIso = isoDate(addDays(start, off));
+        const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+        const isFriOrSat = dow === 5 || dow === 6;
 
-        out.push(b);
+        const key = `${blk.id}__${dayIso}`;
+        const booked = projTotals.dayMin.get(key) ?? 0;
+
+        const visible = !(isFriOrSat && booked <= 0);
+        if (visible) lastVisible = off;
       }
+
+      // mindestens 1 Spalte „belegt“, damit Cursor nicht rückwärts läuft
+      return Math.max(1, lastVisible + 1);
+    };
+
+    for (let i = 0; i < sorted.length; i++) {
+      const b = sorted[i];
+
+      if (i === 0) {
+        const vis = visibleSpanColsFor(b);
+        cursor = clamp(b.startColTop, 0, COLS - 1) + vis;
+        out.push(b);
+        continue;
+      }
+
+      const desiredStart = clamp(b.startColTop, 0, COLS - 1);
+      const newStart = clamp(Math.max(desiredStart, cursor), 0, COLS - 1);
+
+      b.startColTop = newStart;
+
+      const vis = visibleSpanColsFor(b);
+      cursor = newStart + vis;
+
+      out.push(b);
+    }
+
     }
 
     return out;
