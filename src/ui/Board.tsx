@@ -110,6 +110,11 @@ function minutesToHM(min: number) {
   const mm = String(m % 60).padStart(2, "0");
   return `${h}:${mm} h`;
 }
+function ddmm(d: Date) {
+  const day = pad2(d.getUTCDate());
+  const mon = pad2(d.getUTCMonth() + 1);
+  return `${day}.${mon}`;
+}
 
 function isBereich(x: unknown): x is Bereich {
   return x === "maschine" || x === "bank" || x === "lack" || x === "montage";
@@ -908,22 +913,27 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
               </div>
 
               {Array.from({ length: COLS }).map((_, i) => {
-                const label = DAY_LABELS[i % 6];
-                const isWeekBoundary = i % 6 === 0;
-                const isActive = activeCol === i;
+  const label = DAY_LABELS[i % 6];
+  const isWeekBoundary = i % 6 === 0;
+  const isActive = activeCol === i;
 
-                return (
-                  <div
-                    key={i}
-                    className={`text-[11px] text-center border-r border-neutral-800 py-2 ${
-                      isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
-                    } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
-                    style={{ width: CELL_W }}
-                  >
-                    {label}
-                  </div>
-                );
-              })}
+  const d = dateForCol(weekRow, i);
+  const dateLabel = ddmm(d);
+
+  return (
+    <div
+      key={i}
+      className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
+        isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
+      } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
+      style={{ width: CELL_W }}
+    >
+      <div className="leading-4">{label}</div>
+      <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
+    </div>
+  );
+})}
+
             </div>
 
             {/* Mitarbeiterzeilen */}
