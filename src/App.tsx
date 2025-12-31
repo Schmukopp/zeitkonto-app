@@ -72,7 +72,7 @@ export default function App() {
     setSettingsRaw((prev) => updater(structuredClone(prev)));
   };
 
-    // ✅ Konten automatisch aus Buchungen neu berechnen (Urlaub/Ü-Stunden driftfrei)
+        // ✅ Konten automatisch aus Buchungen neu berechnen (Urlaub/Ü-Stunden driftfrei)
   useEffect(() => {
     setMsRaw((prev) => {
       const nextMitarbeiter = recomputeMitarbeiterKonten({
@@ -81,33 +81,37 @@ export default function App() {
       });
 
       // Nur updaten, wenn sich wirklich etwas ändert (verhindert unnötige Renders)
-      let changed = false;
       if (nextMitarbeiter.length !== prev.mitarbeiter.length) {
-        changed = true;
-      } else {
-        for (let i = 0; i < nextMitarbeiter.length; i++) {
-          const a = nextMitarbeiter[i];
-          const b = prev.mitarbeiter[i];
-          if (!b) {
-            changed = true;
-            break;
-          }
-          if (
-            a.id !== b.id ||
-            a.urlaubstageVerbraucht !== b.urlaubstageVerbraucht ||
-            a.ueberstundenSaldo !== b.ueberstundenSaldo
-          ) {
-            changed = true;
-            break;
-          }
+        return { ...prev, mitarbeiter: nextMitarbeiter };
+      }
+
+      // Reihenfolge prüfen (falls sich die Liste aus irgendeinem Grund umsortiert)
+      for (let i = 0; i < nextMitarbeiter.length; i++) {
+        const a = nextMitarbeiter[i];
+        const b = prev.mitarbeiter[i];
+        if (!a || !b || a.id !== b.id) {
+          return { ...prev, mitarbeiter: nextMitarbeiter };
         }
       }
 
-      if (!changed) return prev;
-      return { ...prev, mitarbeiter: nextMitarbeiter };
+      // Inhalt prüfen (id-basiert, robust gegen spätere Sortierungen/Filter)
+      const prevById = new Map(prev.mitarbeiter.map((m) => [m.id, m]));
+      for (const a of nextMitarbeiter) {
+        const b = prevById.get(a.id);
+        if (!b) return { ...prev, mitarbeiter: nextMitarbeiter };
+
+        if (
+          a.urlaubstageVerbraucht !== b.urlaubstageVerbraucht ||
+          a.ueberstundenSaldo !== b.ueberstundenSaldo
+        ) {
+          return { ...prev, mitarbeiter: nextMitarbeiter };
+        }
+      }
+
+      return prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.buchungen]);
+
 
 
   // Mitarbeiter-Stammdaten persistieren (robust + leicht gedrosselt)
