@@ -882,8 +882,11 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
                   <div
                     key={idx}
                     className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
-                      isCurrent ? "bg-orange-500 text-neutral-950" : "bg-neutral-900 text-neutral-300"
-                    }`}
+  isCurrent
+    ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70"
+    : "bg-neutral-900 text-neutral-300"
+}`}
+
                     style={{ width: 6 * CELL_W, height: 40 }}
                   >
                     <div>KW {kw}</div>
