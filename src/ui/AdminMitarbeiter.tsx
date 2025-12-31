@@ -43,22 +43,35 @@ export default function AdminMitarbeiter(p: Props) {
           <div className="text-lg font-semibold">Admin · Mitarbeiter</div>
           <div className="text-sm text-neutral-400">Stammdaten, Arbeitszeitmodell, Urlaub, Überstunden</div>
         </div>
-        <div className="flex gap-2">
+                      <div className="flex gap-2">
           <button
             className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-orange-500"
             onClick={() => p.setMs((s) => createMitarbeiter(s))}
           >
             + Neu
           </button>
+
           {sel && (
             <button
               className="rounded-xl border border-orange-500 bg-neutral-950 px-3 py-2 text-sm text-orange-300 hover:bg-orange-500 hover:text-neutral-950"
-              onClick={() => p.setMs((s) => deleteMitarbeiter(s, sel.id))}
+              onClick={() => {
+                // Schutz: nicht versehentlich den letzten Mitarbeiter löschen
+                if (p.ms.mitarbeiter.length <= 1) return;
+
+                const ok = window.confirm(`Mitarbeiter "${sel.name}" wirklich löschen?`);
+                if (!ok) return;
+
+                p.setMs((s) => deleteMitarbeiter(s, sel.id));
+              }}
+              disabled={p.ms.mitarbeiter.length <= 1}
+              title={p.ms.mitarbeiter.length <= 1 ? "Mindestens ein Mitarbeiter muss vorhanden sein." : "Mitarbeiter löschen"}
             >
               Löschen
             </button>
           )}
         </div>
+
+
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
