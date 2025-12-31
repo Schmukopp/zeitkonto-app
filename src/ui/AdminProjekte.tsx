@@ -76,7 +76,10 @@ export default function AdminProjekte(p: Props) {
 
         <button
           className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-orange-500"
-          onClick={() => p.setState((s) => createProject(s))}
+          onClick={() => {
+  p.setState((s) => createProject(s));
+}}
+
           type="button"
         >
           + Neues Projekt
@@ -133,14 +136,16 @@ export default function AdminProjekte(p: Props) {
                     className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
                     value={proj.name}
                     onFocus={selectAllOnFocus}
-                    onChange={(e) =>
-                      p.setState((s) =>
-                        upsertProject(s, {
-                          ...proj,
-                          name: e.target.value,
-                        })
-                      )
-                    }
+                    onChange={(e) => {
+  const v = e.target.value;
+  p.setState((s) =>
+    upsertProject(s, {
+      ...proj,
+      name: v,
+    })
+  );
+}}
+
                     onBlur={() =>
                       p.setState((s) =>
                         upsertProject(s, {
