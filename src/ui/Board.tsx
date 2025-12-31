@@ -931,12 +931,13 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
 
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
-                  <div
-                    className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-sm text-neutral-100"
-                    style={{ width: NAME_COL_W, height: ROW_H }}
-                  >
-                    <div className="truncate">{m.name}</div>
-                  </div>
+                 <div
+  className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
+  style={{ width: NAME_COL_W, height: ROW_H }}
+>
+  <div className="truncate font-medium">{m.name}</div>
+</div>
+
 
                   <div className="relative" style={{ width: COLS * CELL_W, height: ROW_H }}>
                     {/* Raster + Drop-Zellen */}
@@ -1097,13 +1098,14 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
   }
 
   return (
-    <div className="flex flex-col gap-3 relative">
-      {renderSection(0, topWeeks, scrollTopRef)}
-      {renderSection(1, bottomWeeks, scrollBottomRef)}
-      <div className="text-xs text-neutral-500">
-        Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert). Freitag+Samstag gelten als
-        Pause, wenn dort nicht gebucht wurde.
-      </div>
+  <div className="flex flex-col gap-3 relative w-full">
+    {renderSection(0, topWeeks, scrollTopRef)}
+    {renderSection(1, bottomWeeks, scrollBottomRef)}
+    <div className="text-xs text-neutral-500 px-2">
+      Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert). Freitag+Samstag gelten als
+      Pause, wenn dort nicht gebucht wurde.
     </div>
-  );
+  </div>
+);
+
 }
