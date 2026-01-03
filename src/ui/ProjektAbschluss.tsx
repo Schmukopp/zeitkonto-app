@@ -85,7 +85,10 @@ export default function ProjektAbschluss(p: Props) {
   const nachkalkIds = useMemo(() => loadNachkalkIds(), [projects]);
 
   const boardProjects = useMemo(() => boardIds.map((id) => byId.get(id)).filter(Boolean) as any[], [boardIds, byId]);
-  const nachkalkProjects = useMemo(() => nachkalkIds.map((id) => byId.get(id)).filter(Boolean) as any[], [nachkalkIds, byId]);
+  const nachkalkProjects = useMemo(
+    () => nachkalkIds.map((id) => byId.get(id)).filter(Boolean) as any[],
+    [nachkalkIds, byId]
+  );
 
   const istTotal = useMemo(() => calcIstMinTotalByProjekt(p.state), [p.state]);
 
@@ -106,11 +109,45 @@ export default function ProjektAbschluss(p: Props) {
 
   function finishSelected() {
     if (!selectedId) return;
+    const proj = byId.get(selectedId) as any;
+    if (!proj) return;
+
+    const now = Date.now();
+
+    // Istwerte aus Projekt (werden im Nachkalk-Bereich eingetragen)
+    const istVk = Number(proj.istNettoVkEur) || 0;
+    const istMat = Number(proj.istMaterialEur) || 0;
+
+    const istMinuten = Number(selectedIstMin) || 0;
+    const istH = minutesToHours(istMinuten);
+
+    const wertGesamt = Math.max(0, istVk) - Math.max(0, istMat);
+    const wertProStd = istH > 0 ? wertGesamt / istH : 0;
+
+    const sollMinuten = Number(selectedSollMin) || 0;
+    const ueberzugMinuten = Math.max(0, istMinuten - sollMinuten);
+
+    // ✅ 0) Abschlussdaten dauerhaft im Projekt speichern
+    p.setState((s) =>
+      upsertProject(s, {
+        ...proj,
+        abschluss: {
+          abgeschlossenAt: now,
+          nettoVkIstEur: istVk,
+          materialIstEur: istMat,
+          istMinuten: istMinuten,
+          wertschoepfungEurProStd: istH > 0 ? wertProStd : 0,
+          ueberzugMinuten: ueberzugMinuten > 0 ? ueberzugMinuten : 0,
+          // note/abschlussArt werden vorerst NICHT fest verdrahtet, damit wir den Datenvertrag schlank halten.
+          // Falls du sie speichern willst, erweitern wir ProjektAbschluss später gezielt.
+        },
+      } as any)
+    );
 
     // 1) Nachkalk + vom Board runter
     markProjectFinished(selectedId);
 
-    // 2) Projekt inaktiv setzen
+    // 2) Projekt inaktiv setzen (Alt-Logik bleibt)
     p.setState((s) => setProjectActive(s, selectedId, false));
 
     // 3) Reset UI
@@ -120,8 +157,8 @@ export default function ProjektAbschluss(p: Props) {
     const newBoardIds = loadBoardIds();
     const nextId =
       newBoardIds.find((id) => {
-        const proj = byId.get(id) as any;
-        return proj?.zugeordnetAnId === p.mitarbeiterId;
+        const pr = byId.get(id) as any;
+        return pr?.zugeordnetAnId === p.mitarbeiterId;
       }) ?? newBoardIds[0] ?? "";
     setSelectedId(nextId);
   }
@@ -257,13 +294,28 @@ export default function ProjektAbschluss(p: Props) {
         <div className="text-lg font-semibold">Abschluss</div>
 
         <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-          <button type="button" className={abschlussArt === "fertigung" ? btnActive : btn} onClick={() => setAbschlussArt("fertigung")} disabled={!selectedId}>
+          <button
+            type="button"
+            className={abschlussArt === "fertigung" ? btnActive : btn}
+            onClick={() => setAbschlussArt("fertigung")}
+            disabled={!selectedId}
+          >
             Fertigung fertig
           </button>
-          <button type="button" className={abschlussArt === "montage" ? btnActive : btn} onClick={() => setAbschlussArt("montage")} disabled={!selectedId}>
+          <button
+            type="button"
+            className={abschlussArt === "montage" ? btnActive : btn}
+            onClick={() => setAbschlussArt("montage")}
+            disabled={!selectedId}
+          >
             Montage fertig
           </button>
-          <button type="button" className={abschlussArt === "abgeholt" ? btnActive : btn} onClick={() => setAbschlussArt("abgeholt")} disabled={!selectedId}>
+          <button
+            type="button"
+            className={abschlussArt === "abgeholt" ? btnActive : btn}
+            onClick={() => setAbschlussArt("abgeholt")}
+            disabled={!selectedId}
+          >
             Abgeholt / geliefert
           </button>
         </div>
@@ -305,7 +357,9 @@ export default function ProjektAbschluss(p: Props) {
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm text-neutral-400">
             Ausgewählt:{" "}
-            <span className="text-neutral-100">{selected ? `${fmtName((selected as any).name)} (${(selected as any).id})` : "—"}</span>
+            <span className="text-neutral-100">
+              {selected ? `${fmtName((selected as any).name)} (${(selected as any).id})` : "—"}
+            </span>
           </div>
 
           <button className={btnDanger} onClick={finishSelected} disabled={!selectedId}>
@@ -401,7 +455,11 @@ export default function ProjektAbschluss(p: Props) {
                       </div>
                       <div>
                         Wert/Std:{" "}
-                        <span className={hatIst && istH > 0 ? (ok ? "text-neutral-100" : "text-orange-300") : "text-neutral-500"}>
+                        <span
+                          className={
+                            hatIst && istH > 0 ? (ok ? "text-neutral-100" : "text-orange-300") : "text-neutral-500"
+                          }
+                        >
                           {hatIst && istH > 0 ? `${fmtMoney(wertProStd)} €/h` : "—"}
                         </span>{" "}
                         <span className="text-xs text-neutral-500">· Ziel {Number(ziel).toFixed(0)} €/h</span>
