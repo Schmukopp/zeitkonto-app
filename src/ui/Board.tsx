@@ -26,14 +26,17 @@ const NAME_COL_W = 240;
 const PROJECT_BAND_H = 32;
 
 // Band 2 (unten): Buchungen (Auto-Pack)
-// Step 3A: Lanes werden pro Mitarbeiter-Zeile dynamisch erweitert (Minimum bleibt fix)
+// Step 3A: Lanes werden pro Mitarbeiter-Zeile dynamisch erweitert
 const MIN_BOOKING_LANES = 2;
+const MAX_BOOKING_LANES = 4; // Step 3A.2: visuell begrenzen
 const BOOKING_LANE_H = 24;
 
-// ROW_H ist ab Step 3A pro Zeile dynamisch (abhängig von benötigten Lanes)
+// ROW_H ist pro Zeile dynamisch, aber capped (damit das Board nicht explodiert)
 function rowHeightPx(lanes: number) {
-  return PROJECT_BAND_H + Math.max(MIN_BOOKING_LANES, lanes) * BOOKING_LANE_H;
+  const capped = Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, lanes));
+  return PROJECT_BAND_H + capped * BOOKING_LANE_H;
 }
+
 
 
 // Basis-Kapazität pro Worker und Tag (10h = 600min)
@@ -748,18 +751,34 @@ export default function Board({ state, setState, ms }: Props) {
         const widthPxRaw = (Math.max(0, e.minuten) / denom) * CELL_W;
         const widthPx = clamp(Math.round(widthPxRaw), 10, CELL_W - 4);
 
-        // Wunsch-Lane aus Pref, sonst 0
+                // Wunsch-Lane aus Pref, sonst 0 (aber capped)
         let lane = lanePref.has(projId) ? (lanePref.get(projId) as number) : 0;
+        lane = clamp(lane, 0, MAX_BOOKING_LANES - 1);
 
-        // Prüfen ob passt, sonst nach unten suchen, sonst neue Lane
+        // Prüfen ob passt, sonst nach unten suchen.
+        // Wir erweitern Lanes nur bis MAX_BOOKING_LANES, danach "quetschen" wir in die letzte Lane.
         while (true) {
-          if (lane >= usedPxByLane.length) usedPxByLane.push(0);
+          if (lane >= usedPxByLane.length) {
+            if (usedPxByLane.length < MAX_BOOKING_LANES) usedPxByLane.push(0);
+            else break; // keine neuen Lanes mehr möglich
+          }
 
-          const used = usedPxByLane[lane];
-          if (used + widthPx + 2 <= CELL_W - 2) break;
+          const safeLane = Math.min(lane, usedPxByLane.length - 1);
+          const used = usedPxByLane[safeLane];
 
+          if (used + widthPx + 2 <= CELL_W - 2) {
+            lane = safeLane;
+            break;
+          }
+
+          // nächste Lane versuchen, aber nie über MAX hinaus
+          if (lane >= MAX_BOOKING_LANES - 1) {
+            lane = MAX_BOOKING_LANES - 1;
+            break;
+          }
           lane++;
         }
+
 
         const leftPx = clamp(usedPxByLane[lane] + 2, 2, CELL_W - 2);
         const maxW = Math.max(6, CELL_W - 2 - leftPx);
@@ -790,7 +809,8 @@ export default function Board({ state, setState, ms }: Props) {
       }
     }
 
-    return { segs, lanes: Math.max(MIN_BOOKING_LANES, maxLaneUsed) };
+    return { segs, lanes: Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, maxLaneUsed)) };
+
   }
 
   // ===== Step 2: Plan-Linie mit Lücken =====
