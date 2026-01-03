@@ -718,13 +718,30 @@ export default function Board({ state, setState, ms }: Props) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
     function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
-    setState((s) => {
-      const next = structuredClone(s) as any;
-      if (!next.boardLayout) next.boardLayout = {};
-      next.boardLayout[String(projectId)] = nextPos;
-      return next;
-    });
-  }
+  setState((s) => {
+    const next = structuredClone(s) as any;
+    if (!next.boardLayout) next.boardLayout = {};
+    next.boardLayout[String(projectId)] = nextPos;
+
+    // ✅ WICHTIG: Drop-Zuordnung auch ins Projekt schreiben (damit es nachvollziehbar bleibt)
+    const pid = String(projectId);
+    const rowId = String(nextPos.rowId);
+
+    if (Array.isArray(next.projects)) {
+      const idx = next.projects.findIndex((p: any) => String(p?.id) === pid);
+      if (idx >= 0) {
+        const proj = next.projects[idx];
+        next.projects[idx] = {
+          ...proj,
+          // operativ zugeordnet (Board-Zeile)
+          zugeordnetAnId: rowId,
+        };
+      }
+    }
+
+    return next;
+  });
+}
 
   function onDragStart(e: React.DragEvent, projectId: string) {
     setDraggingId(projectId);
