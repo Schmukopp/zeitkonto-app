@@ -4,7 +4,6 @@ import type { Buchung, Projekt, Bereich } from "./timeTypes";
 const LS_KEY = "orgaboard_time_v1";
 const LS_BAK = `${LS_KEY}.bak`;
 
-
 /**
  * Arbeitsart ist dein Projekt-SOLL-Splitting.
  * Zeitstrahlen.tsx importiert Arbeitsart aus timeStore -> export hier.
@@ -22,8 +21,28 @@ export type RunningTimer = {
 
 export type BoardLayoutPos = { rowId: string; startCol: number };
 
+export type ProjektStatus = "aktiv" | "archiv";
+
+export type ProjektAbschluss = {
+  abgeschlossenAt: number;
+  nettoVkIstEur?: number;
+  materialIstEur?: number;
+  istMinuten?: number;
+  wertschoepfungEurProStd?: number;
+  ueberzugMinuten?: number;
+};
+
 export type State = {
-  projects: Projekt[];
+  projects: (Projekt & {
+    // ✅ Lifecycle (neu)
+    status?: ProjektStatus;
+    archivJahr?: number;
+    archiviertAt?: number;
+    abschluss?: ProjektAbschluss;
+
+    // ⚠️ Alt-Feld bleibt toleriert
+    active?: boolean;
+  })[];
   buchungen: Buchung[];
   running: RunningTimer | null;
   boardLayout?: Record<string, BoardLayoutPos>;
@@ -74,7 +93,6 @@ function normalizeIsoDatum(v: unknown): string {
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return "";
-    // ISO datetime -> nur Datum
     if (s.length >= 10) return s.slice(0, 10);
     return s;
   }
@@ -93,14 +111,12 @@ function normalizeIsoDatum(v: unknown): string {
   if (v && typeof v === "object") {
     const o: any = v;
 
-    // häufige Kandidaten
     const cands = [o.iso, o.datum, o.date, o.value];
     for (const c of cands) {
       const s = normalizeIsoDatum(c);
       if (s) return s;
     }
 
-    // y/m/d oder year/month/day
     const y = num(o.y ?? o.year);
     const m = num(o.m ?? o.month);
     const d = num(o.d ?? o.day);
@@ -142,7 +158,6 @@ function normalizeBuchung(b: any): Buchung | null {
   const projektId = b.projektId != null ? str(b.projektId) : undefined;
 
   const datum = normalizeIsoDatum(b.datum);
-  // Wenn datum komplett kaputt ist: nicht crashen, aber auch nicht leer lassen
   const fixedDatum = datum || todayIso();
 
   const fixed: any = {
@@ -153,18 +168,15 @@ function normalizeBuchung(b: any): Buchung | null {
     art,
   };
 
-  // Felder, die bei "arbeit" relevant sind
   if (art === "arbeit") {
     fixed.projektId = str(projektId, "");
     fixed.bereich = b.bereich as Bereich;
     fixed.startTs = num(b.startTs) || fixed.startTs;
     fixed.endeTs = num(b.endeTs) || fixed.endeTs;
 
-    // Minuten robust: akzeptiere minuten, sonst stunden*60, sonst 0
     const min = num(b.minuten) || num(b.stunden) * 60 || 0;
     fixed.minuten = Math.max(0, Math.round(min));
   } else {
-    // Status-Einträge können minuten null haben
     if (b.minuten === null) fixed.minuten = null;
     else fixed.minuten = b.minuten != null ? Math.max(0, num(b.minuten) || 0) : fixed.minuten;
   }
@@ -175,9 +187,9 @@ function normalizeBuchung(b: any): Buchung | null {
 export function loadTimeState(): State {
   const fallback = (): State => ({
     projects: [
-      { id: "p1", name: "Allgemein", active: true, kalkStunden: 0 } as any,
-      { id: "p2", name: "Projekt A", active: true, kalkStunden: 10 } as any,
-      { id: "p3", name: "Projekt B", active: true, kalkStunden: 20 } as any,
+      { id: "p1", name: "Allgemein", active: true, kalkStunden: 0, status: "aktiv" } as any,
+      { id: "p2", name: "Projekt A", active: true, kalkStunden: 10, status: "aktiv" } as any,
+      { id: "p3", name: "Projekt B", active: true, kalkStunden: 20, status: "aktiv" } as any,
     ],
     buchungen: [],
     running: null,
@@ -186,20 +198,49 @@ export function loadTimeState(): State {
   const raw = localStorage.getItem(LS_KEY);
   const rawBak = localStorage.getItem(LS_BAK);
 
-  const parseAndNormalize = (parsed: any): State => {
-    // Projekte normalisieren (minimal defensiv)
-    const projectsRaw: any[] = Array.isArray(parsed?.projects) ? parsed.projects : [];
-    const projects: Projekt[] = projectsRaw
-      .map((p: any) => ({
-        ...p,
-        id: str(p?.id, uid()),
-        name: str(p?.name, "Projekt"),
-        active: p?.active !== false,
-        kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
-      }))
-      .filter((p: any) => !!p?.id);
+  const normalizeProject = (p: any): any => {
+    const active = p?.active !== false;
 
-    // ✅ Buchungen normalisieren (Datum/IDs/Minuten)
+    // ✅ Migration-Regel:
+    // - Wenn status fehlt: status = (active ? "aktiv" : "archiv"?) -> wir setzen konservativ "aktiv"
+    //   (Archiv wird nur über "archiveProject" gesetzt, niemals über "active")
+    const status: ProjektStatus =
+      p?.status === "archiv" ? "archiv" : "aktiv";
+
+    const fixed: any = {
+      ...p,
+      id: str(p?.id, uid()),
+      name: str(p?.name, "Projekt"),
+      active,
+
+      // ✅ Lifecycle
+      status,
+      archivJahr: p?.archivJahr,
+      archiviertAt: p?.archiviertAt,
+      abschluss: p?.abschluss,
+
+      kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
+      arbeitsarten: normalizeArbeitsarten(p) ?? p?.arbeitsarten,
+
+      kunde: p?.kunde != null ? str(p.kunde) : undefined,
+      notiz: p?.notiz != null ? str(p.notiz) : undefined,
+
+      hauptdarstellerId: p?.hauptdarstellerId != null ? str(p.hauptdarstellerId) : undefined,
+      zugeordnetAnId: p?.zugeordnetAnId != null ? str(p.zugeordnetAnId) : undefined,
+
+      planNettoVkEur: p?.planNettoVkEur,
+      planMaterialEur: p?.planMaterialEur,
+      istNettoVkEur: p?.istNettoVkEur,
+      istMaterialEur: p?.istMaterialEur,
+    };
+
+    return fixed;
+  };
+
+  const parseAndNormalize = (parsed: any): State => {
+    const projectsRaw: any[] = Array.isArray(parsed?.projects) ? parsed.projects : [];
+    const projects: any[] = projectsRaw.map(normalizeProject).filter((p: any) => !!p?.id);
+
     const buchungenRaw: any[] = Array.isArray(parsed?.buchungen) ? (parsed.buchungen as any[]) : [];
     const buchungen: Buchung[] = buchungenRaw.map(normalizeBuchung).filter((x): x is Buchung => !!x);
 
@@ -220,35 +261,29 @@ export function loadTimeState(): State {
 
     return {
       projects:
-        projects.length > 0 ? projects : ([{ id: "p1", name: "Allgemein", active: true, kalkStunden: 0 }] as any),
+        projects.length > 0 ? (projects as any) : ([{ id: "p1", name: "Allgemein", active: true, kalkStunden: 0, status: "aktiv" }] as any),
       buchungen,
       running,
       boardLayout: (parsed as any)?.boardLayout ?? undefined,
     };
   };
 
-  // 1) Hauptkey probieren
   if (raw && raw.trim()) {
     try {
       const parsed = JSON.parse(raw);
       const out = parseAndNormalize(parsed);
-
-      // Reparierte Daten zurückschreiben (ohne Backup-Verlust)
       saveState(out);
-
       return out;
     } catch (err) {
       console.warn("loadTimeState failed", err);
     }
   }
 
-  // 2) Backup probieren + automatisch wiederherstellen
   if (rawBak && rawBak.trim()) {
     try {
       const parsedBak = JSON.parse(rawBak);
       const out = parseAndNormalize(parsedBak);
 
-      // Restore: Backup -> Hauptkey
       localStorage.setItem(LS_KEY, rawBak);
       saveState(out);
 
@@ -258,7 +293,6 @@ export function loadTimeState(): State {
     }
   }
 
-  // 3) Fallback
   return fallback();
 }
 
@@ -268,7 +302,6 @@ export function loadState(): State {
 }
 
 export function saveState(s: State) {
-  // Backup der vorherigen Version
   localStorage.setItem(LS_BAK, localStorage.getItem(LS_KEY) || "");
   localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
@@ -277,8 +310,6 @@ export function saveState(s: State) {
 export function saveTimeState(s: State) {
   saveState(s);
 }
-
-
 
 export function ensureOneStatusPerDay(b: Buchung[], mitarbeiterId: string, datum: string) {
   return (b ?? []).filter(
@@ -315,11 +346,8 @@ export function stopTimer(s: State, datumOverride?: string) {
 
   const endTs = Date.now();
   const rawMinutes = Math.round((endTs - s.running.startTs) / 60000);
-
-  // 🔒 mindestens 1 Minute bei jeder Arbeit
   const minutes = Math.max(1, rawMinutes);
 
-  // Datum override ebenfalls sauber normalisieren (oder heute UTC)
   const datum = normalizeIsoDatum(datumOverride) || todayIso();
 
   s.buchungen.push({
@@ -401,14 +429,29 @@ export function deleteBuchung(s: State, id: string) {
 
 // --- Projekte ----------------------------------------------------------------
 
+/**
+ * ✅ Nur aktive Projekte für Board/Heute:
+ * - bevorzugt status === "aktiv"
+ * - fallback: active !== false (Altstand)
+ */
 export function getActiveProjects(s: State): Projekt[] {
-  return (s.projects ?? []).filter((p: any) => p?.active !== false) as any;
+  return (s.projects ?? []).filter((p: any) => {
+    const st = p?.status;
+    if (st === "archiv") return false;
+    if (st === "aktiv") return true;
+    return p?.active !== false;
+  }) as any;
 }
 
 export function createProject(s: State, name = "Neues Projekt"): State {
   const p: any = {
     id: uid(),
     name: str(name, "Neues Projekt"),
+
+    // ✅ Lifecycle Default
+    status: "aktiv",
+
+    // Alt
     active: true,
 
     kalkStunden: 0,
@@ -439,6 +482,12 @@ export function upsertProject(s: State, patch: Projekt): State {
     id: str(p?.id, uid()),
     name: str(p?.name, "Projekt"),
     active: p?.active !== false,
+
+    // ✅ Lifecycle Default (wenn fehlt)
+    status: p?.status === "archiv" ? "archiv" : "aktiv",
+    archivJahr: p?.archivJahr,
+    archiviertAt: p?.archiviertAt,
+    abschluss: p?.abschluss,
 
     kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
 
@@ -473,12 +522,43 @@ export function setProjectActive(s: State, id: string, active: boolean): State {
     return {
       ...p,
       active,
+
+      // ✅ wenn man deaktiviert, wird NICHT archiviert (separates Konzept)
+      status: p?.status === "archiv" ? "archiv" : (p?.status ?? "aktiv"),
+
       kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
       arbeitsarten: normalizeArbeitsarten(p) ?? p?.arbeitsarten,
       planNettoVkEur: clamp(num(p?.planNettoVkEur) || 0, 0, 99999999),
       planMaterialEur: clamp(num(p?.planMaterialEur) || 0, 0, 99999999),
       istNettoVkEur: clamp(num(p?.istNettoVkEur) || 0, 0, 99999999),
       istMaterialEur: clamp(num(p?.istMaterialEur) || 0, 0, 99999999),
+    };
+  }) as any;
+
+  saveState(s);
+  return s;
+}
+
+/**
+ * ✅ Archivieren (statt Löschen)
+ * - setzt status="archiv"
+ * - setzt archivJahr / archiviertAt
+ * - löscht keine Buchungen
+ */
+export function archiveProject(s: State, projektId: string, jahr: number): State {
+  const targetId = str(projektId);
+  const y = Math.trunc(num(jahr));
+
+  s.projects = (s.projects ?? []).map((p: any) => {
+    if (String(p?.id) !== targetId) return p;
+
+    return {
+      ...p,
+      status: "archiv",
+      archivJahr: y,
+      archiviertAt: Date.now(),
+      // optional: active false, damit Alt-Views auch sofort reagieren
+      active: false,
     };
   }) as any;
 
