@@ -390,6 +390,8 @@ export default function Board({ state, setState, ms }: Props) {
 
   const scrollTopRef = useRef<HTMLDivElement | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement | null>(null);
+    const bookingLanePrefsRef = useRef<Map<string, Map<string, number>>>(new Map());
+
 
   function dateForCol(weekRow: 0 | 1, col: number) {
     const weekIdx = Math.floor(col / 6);
@@ -710,93 +712,86 @@ export default function Board({ state, setState, ms }: Props) {
     sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
   }, [running?.projektId, blockParts]);
 
-  // --------- Buchungen packen ----------
+    // --------- Buchungen packen ----------
   function packDaySegments(rowId: string, weekRow: 0 | 1): PackResult {
-  const segs: PackedSeg[] = [];
-  let maxLaneUsed = 0;
+    const segs: PackedSeg[] = [];
+    let maxLaneUsed = 0;
 
-  for (let col = 0; col < COLS; col++) {
-    const iso = isoDate(dateForCol(weekRow, col));
-    const dayKey = `${rowId}__${iso}`;
+    // Stabilität: gleiche Projekte sollen möglichst auf derselben Lane bleiben
+    const stableKey = `${rowId}__${weekRow}`;
+    const prefStore = bookingLanePrefsRef.current;
+    if (!prefStore.has(stableKey)) prefStore.set(stableKey, new Map<string, number>());
+    const lanePref = prefStore.get(stableKey)!;
 
-    const entries = empDayProjIdx.get(dayKey) ?? [];
-    if (entries.length === 0) continue;
+    for (let col = 0; col < COLS; col++) {
+      const iso = isoDate(dateForCol(weekRow, col));
+      const dayKey = `${rowId}__${iso}`;
 
-    const m = mitarbeiter.find((x: any) => String(x.id) === String(rowId));
-    const soll = sollMinutenFor(m, iso);
-    const denom = Math.max(1, soll > 0 ? soll : BASE_CAP_MIN);
+      const entries = empDayProjIdx.get(dayKey) ?? [];
+      if (entries.length === 0) continue;
 
-    // Step 3A: dynamische Lanes (Minimum bleibt MIN_BOOKING_LANES)
-    const usedPxByLane: number[] = Array.from({ length: MIN_BOOKING_LANES }, () => 0);
+      const m = mitarbeiter.find((x: any) => String(x.id) === String(rowId));
+      const soll = sollMinutenFor(m, iso);
+      const denom = Math.max(1, soll > 0 ? soll : BASE_CAP_MIN);
 
-    const sorted = entries.slice().sort((a, b) => b.minuten - a.minuten);
+      // Step 3A: dynamische Lanes (Minimum bleibt MIN_BOOKING_LANES)
+      const usedPxByLane: number[] = Array.from({ length: MIN_BOOKING_LANES }, () => 0);
 
-    for (const e of sorted) {
-      const proj = projectById.get(String(e.projektId));
-      const meisterId = pickPlannerMeisterId(proj);
+      // Größte zuerst, dann packen
+      const sorted = entries.slice().sort((a, b) => b.minuten - a.minuten);
 
-      const widthPxRaw = (Math.max(0, e.minuten) / denom) * CELL_W;
-      const widthPx = clamp(Math.round(widthPxRaw), 10, CELL_W - 4);
+      for (const e of sorted) {
+        const projId = String(e.projektId);
+        const proj = projectById.get(projId);
+        const meisterId = pickPlannerMeisterId(proj);
 
-      // Lane suchen; wenn keine passt -> neue Lane hinzufügen
-      let lane = 0;
-      while (true) {
-        if (lane >= usedPxByLane.length) {
-          usedPxByLane.push(0);
+        const widthPxRaw = (Math.max(0, e.minuten) / denom) * CELL_W;
+        const widthPx = clamp(Math.round(widthPxRaw), 10, CELL_W - 4);
+
+        // Wunsch-Lane aus Pref, sonst 0
+        let lane = lanePref.has(projId) ? (lanePref.get(projId) as number) : 0;
+
+        // Prüfen ob passt, sonst nach unten suchen, sonst neue Lane
+        while (true) {
+          if (lane >= usedPxByLane.length) usedPxByLane.push(0);
+
+          const used = usedPxByLane[lane];
+          if (used + widthPx + 2 <= CELL_W - 2) break;
+
+          lane++;
         }
 
-        const used = usedPxByLane[lane];
-        if (used + widthPx + 2 <= CELL_W - 2) break;
+        const leftPx = clamp(usedPxByLane[lane] + 2, 2, CELL_W - 2);
+        const maxW = Math.max(6, CELL_W - 2 - leftPx);
+        const w = Math.min(widthPx, maxW);
 
-        lane++;
+        usedPxByLane[lane] = leftPx + w;
+
+        const pname = String(proj?.name ?? projId);
+        const label = `${Math.round(e.minuten / 30) / 2}h`;
+        const tooltip = `${pname}\n${iso}\nIst: ${minutesToHM(e.minuten)}`;
+        const colorClass = pickColorForProject(projId, meisterId);
+
+        segs.push({
+          key: `${dayKey}__${projId}__${lane}__${leftPx}`,
+          col,
+          lane,
+          leftPx,
+          widthPx: w,
+          label,
+          tooltip,
+          colorClass,
+        });
+
+        // Pref aktualisieren
+        lanePref.set(projId, lane);
+
+        if (lane + 1 > maxLaneUsed) maxLaneUsed = lane + 1;
       }
-
-      const leftPx = clamp(usedPxByLane[lane] + 2, 2, CELL_W - 2);
-      const maxW = Math.max(6, CELL_W - 2 - leftPx);
-      const w = Math.min(widthPx, maxW);
-
-      usedPxByLane[lane] = leftPx + w;
-
-      const pname = String(proj?.name ?? e.projektId);
-      const label = `${Math.round(e.minuten / 30) / 2}h`;
-      const tooltip = `${pname}\n${iso}\nIst: ${minutesToHM(e.minuten)}`;
-      const colorClass = pickColorForProject(String(e.projektId), meisterId);
-
-      segs.push({
-        key: `${dayKey}__${e.projektId}__${lane}__${leftPx}`,
-        col,
-        lane,
-        leftPx,
-        widthPx: w,
-        label,
-        tooltip,
-        colorClass,
-      });
-
-      if (lane + 1 > maxLaneUsed) maxLaneUsed = lane + 1;
     }
+
+    return { segs, lanes: Math.max(MIN_BOOKING_LANES, maxLaneUsed) };
   }
-
-  return { segs, lanes: Math.max(MIN_BOOKING_LANES, maxLaneUsed) };
-}
-
-
-
-  // Fokus auf laufendes Projekt
-  useEffect(() => {
-    const pid = running?.projektId ? String(running.projektId) : null;
-    if (!pid) return;
-
-    const topPart = blockParts.find((p) => p.projectId === pid && p.weekRow === 0 && p.relStart === 0);
-    const part = topPart ?? blockParts.find((p) => p.projectId === pid);
-    if (!part) return;
-
-    const sc = part.weekRow === 0 ? scrollTopRef.current : scrollBottomRef.current;
-    if (!sc) return;
-
-    const x = NAME_COL_W + part.startCol * CELL_W - sc.clientWidth * 0.35;
-    sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
-  }, [running?.projektId, blockParts]);
 
   // ===== Step 2: Plan-Linie mit Lücken =====
   // Regel: Wenn dieses Projekt an einem Tag KEINE Buchung hat, aber der Mitarbeiter an dem Tag
@@ -982,7 +977,7 @@ export default function Board({ state, setState, ms }: Props) {
     );
   }
 
-      function renderSection(
+        function renderSection(
     weekRow: 0 | 1,
     weeks4: Date[],
     scrollRef: React.RefObject<HTMLDivElement>
@@ -998,10 +993,7 @@ export default function Board({ state, setState, ms }: Props) {
           <div className="min-w-max">
             {/* KW Header */}
             <div className="flex">
-              <div
-                className="shrink-0 border-r border-neutral-800"
-                style={{ width: NAME_COL_W, height: 40 }}
-              />
+              <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 40 }} />
               {weeks4.map((wStart, idx) => {
                 const isCurrent = weekRow === 0 && idx === 1;
                 const kw = kalenderjahrKW(wStart);
@@ -1117,6 +1109,7 @@ export default function Board({ state, setState, ms }: Props) {
                             width: seg.widthPx,
                             height: BOOKING_LANE_H - 8,
                           }}
+                          title={seg.tooltip}
                         >
                           <div className={`absolute inset-0 ${seg.colorClass}`} />
                           <div className="absolute inset-0 bg-neutral-950/55" />
@@ -1129,78 +1122,77 @@ export default function Board({ state, setState, ms }: Props) {
 
                     {renderStatusOverlay(rowId, weekRow, lanes)}
 
-                    {/* Projektblöcke (mit Beschriftung am Segmentanfang) */}
-{rowParts.map((p) => {
-  const isDragging = draggingId === p.projectId;
-  const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
+                    {/* Projektblöcke (mit Beschriftung) */}
+                    {rowParts.map((p) => {
+                      const isDragging = draggingId === p.projectId;
+                      const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
 
-  const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
-  const planMin = Math.max(0, p.planMinuten);
+                      const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
+                      const planMin = Math.max(0, p.planMinuten);
 
-  const title = `${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${p.firstIso ?? "—"}`;
+                      const title = `${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(
+                        planMin
+                      )}\nStart: ${p.firstIso ?? "—"}`;
 
-  const segs = buildPlanOutlineSegments(p, rowId);
-  if (segs.length === 0) return null;
+                      const segs = buildPlanOutlineSegments(p, rowId);
+                      if (segs.length === 0) return null;
 
-  return (
-    <React.Fragment key={p.key}>
-      {segs.map((s, idx) => {
-        const softBg = meisterSoftBgClass(p.meisterId);
+                      return (
+                        <React.Fragment key={p.key}>
+                          {segs.map((s, idx) => {
+                            const softBg = meisterSoftBgClass(p.meisterId);
 
-        const segLeft = (p.startCol + s.start) * CELL_W + 2;
-        const segTop = 2;
-        const segW = s.span * CELL_W - 4;
-        const segH = PROJECT_BAND_H - 4;
+                            const segLeft = (p.startCol + s.start) * CELL_W + 2;
+                            const segTop = 2;
+                            const segW = s.span * CELL_W - 4;
+                            const segH = PROJECT_BAND_H - 4;
 
-        const segPart: BlockPart = {
-          ...p,
-          key: `${p.key}__seg__${idx}`,
-          startCol: p.startCol + s.start,
-          span: s.span,
-          relStart: p.relStart + s.start,
-        };
+                            const segPart: BlockPart = {
+                              ...p,
+                              key: `${p.key}__seg__${idx}`,
+                              startCol: p.startCol + s.start,
+                              span: s.span,
+                              relStart: p.relStart + s.start,
+                            };
 
-        // Label nur, wenn genug Platz (wie vorher)
-        const showLabel = s.span * CELL_W >= 140;
+                            const showLabel = s.span * CELL_W >= 140;
 
-        return (
-          <div
-            key={segPart.key}
-            draggable
-            onDragStart={(e) => onDragStart(e, p.projectId)}
-            onDragEnd={onDragEnd}
-            className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
-              isDragging
-                ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
-                : isRunningProject
-                ? "border-blue-500 bg-neutral-900 text-neutral-100"
-                : `border-orange-500/80 ${softBg} text-neutral-100`
-            }`}
-            style={{ top: segTop, left: segLeft, width: segW, height: segH }}
-            title={title}
-          >
-            {/* Kontrast-Layer über dem SoftBg */}
-            {!isDragging && !isRunningProject ? <div className="absolute inset-0 bg-neutral-950/35" /> : null}
+                            return (
+                              <div
+                                key={segPart.key}
+                                draggable
+                                onDragStart={(e) => onDragStart(e, p.projectId)}
+                                onDragEnd={onDragEnd}
+                                className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
+                                  isDragging
+                                    ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
+                                    : isRunningProject
+                                    ? "border-blue-500 bg-neutral-900 text-neutral-100"
+                                    : `border-orange-500/80 ${softBg} text-neutral-100`
+                                }`}
+                                style={{ top: segTop, left: segLeft, width: segW, height: segH }}
+                                title={title}
+                              >
+                                {!isDragging && !isRunningProject ? (
+                                  <div className="absolute inset-0 bg-neutral-950/35" />
+                                ) : null}
 
-            {/* Beschriftung am Segmentanfang (vertikal mittig, im Vordergrund) */}
-            {showLabel ? (
-              <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
-                <div className="ml-2 flex items-center gap-2 min-w-0 px-2 py-1 rounded bg-neutral-950/55 border border-neutral-200/10">
-                  <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
-                  <div className="truncate text-[11px] font-semibold text-neutral-50">{p.name}</div>
-                </div>
-              </div>
-            ) : null}
+                                {showLabel ? (
+                                  <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
+                                    <div className="ml-2 flex items-center gap-2 min-w-0 px-2 py-1 rounded bg-neutral-950/55 border border-neutral-200/10">
+                                      <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
+                                      <div className="truncate text-[11px] font-semibold text-neutral-50">{p.name}</div>
+                                    </div>
+                                  </div>
+                                ) : null}
 
-            {/* Fortschritt (geclippt auf Segment-Part) */}
-            <div className="absolute inset-0">{renderProjectProgressOverlay(segPart)}</div>
-          </div>
-        );
-      })}
-    </React.Fragment>
-  );
-})}
-
+                                <div className="absolute inset-0">{renderProjectProgressOverlay(segPart)}</div>
+                              </div>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
                 </div>
               );
