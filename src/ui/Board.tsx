@@ -960,257 +960,266 @@ export default function Board({ state, setState, ms }: Props) {
   }
 
   function renderSection(weekRow: 0 | 1, weeks4: Date[], scrollRef: React.RefObject<HTMLDivElement>) {
-    const parts = blockParts.filter((p) => p.weekRow === weekRow);
-    const activeCol = running?.datum ? colForIso(weekRow, String(running.datum).slice(0, 10)) : null;
+  const parts = blockParts.filter((p) => p.weekRow === weekRow);
+  const activeCol = running?.datum ? colForIso(weekRow, String(running.datum).slice(0, 10)) : null;
 
-    return (
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
-        <div ref={scrollRef} className="overflow-x-auto">
-          <div className="min-w-max">
-            {/* KW Header */}
-            <div className="flex">
-              <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 40 }} />
-              {weeks4.map((wStart, idx) => {
-                const isCurrent = weekRow === 0 && idx === 1;
-                const kw = kalenderjahrKW(wStart);
-                const from = isoDate(wStart);
-                const to = isoDate(weekEndDisplayMoSaCapped(wStart));
-
-                return (
-                  <div
-                    key={idx}
-                    className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
-                      isCurrent ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70" : "bg-neutral-900 text-neutral-300"
-                    }`}
-                    style={{ width: 6 * CELL_W, height: 40 }}
-                  >
-                    <div>KW {kw}</div>
-                    <div className={`${isCurrent ? "text-neutral-900" : "text-neutral-500"} text-[10px] font-medium`}>
-                      {from} – {to}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Tage */}
-            <div className="flex border-b border-neutral-800">
-              <div
-                className="shrink-0 border-r border-neutral-800 px-2 py-2 text-xs text-neutral-400"
-                style={{ width: NAME_COL_W }}
-              >
-                Mitarbeiter
-              </div>
-
-              {Array.from({ length: COLS }).map((_, i) => {
-                const label = DAY_LABELS[i % 6];
-                const isWeekBoundary = i % 6 === 0;
-                const isActive = activeCol === i;
-
-                const d = dateForCol(weekRow, i);
-                const dateLabel = ddmm(d);
-
-                return (
-                  <div
-                    key={i}
-                    className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
-                      isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
-                    } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
-                    style={{ width: CELL_W }}
-                  >
-                    <div className="leading-4">{label}</div>
-                    <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Mitarbeiterzeilen */}
-            {mitarbeiter.map((m: any) => {
-              const rowId = String(m.id);
-              const rowParts = parts.filter((p) => String(p.rowId) === rowId);
-              const packed = packDaySegments(rowId, weekRow);
+  return (
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
+      <div ref={scrollRef} className="overflow-x-auto">
+        <div className="min-w-max">
+          {/* KW Header */}
+          <div className="flex">
+            <div className="shrink-0 border-r border-neutral-800" style={{ width: NAME_COL_W, height: 40 }} />
+            {weeks4.map((wStart, idx) => {
+              const isCurrent = weekRow === 0 && idx === 1;
+              const kw = kalenderjahrKW(wStart);
+              const from = isoDate(wStart);
+              const to = isoDate(weekEndDisplayMoSaCapped(wStart));
 
               return (
-                <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
-                  <div
-                    className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
-                    style={{ width: NAME_COL_W, height: ROW_H }}
-                  >
-                    <div className="truncate font-medium">{m.name}</div>
-                  </div>
-
-                  <div className="relative" style={{ width: COLS * CELL_W, height: ROW_H }}>
-                    {/* Raster + Drop-Zellen */}
-                    <div className="absolute inset-0">
-                      {Array.from({ length: COLS }).map((_, col) => {
-                        const isWeekBoundary = col % 6 === 0;
-                        const isActive = activeCol === col;
-
-                        return (
-                          <div
-                            key={col}
-                            className={`absolute top-0 bottom-0 border-r border-neutral-800 ${
-                              isWeekBoundary ? "bg-neutral-900/35" : "bg-neutral-950"
-                            } ${isActive ? "bg-blue-500/5" : ""}`}
-                            style={{ left: col * CELL_W, width: CELL_W }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
-                          >
-                            <div className="absolute left-0 right-0 border-t border-neutral-800/70" style={{ top: PROJECT_BAND_H }} />
-                            {Array.from({ length: BOOKING_LANES - 1 }).map((__, i) => (
-                              <div
-                                key={i}
-                                className="absolute left-0 right-0 border-t border-neutral-800/40"
-                                style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
-                              />
-                            ))}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Buchungs-Segmente */}
-                    {packed.map((seg) => {
-                      const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
-                      const leftPx = seg.col * CELL_W + seg.leftPx;
-
-                      return (
-                        <div
-                          key={seg.key}
-                          className="absolute z-10 rounded-md border border-neutral-800 overflow-hidden"
-                          style={{
-                            top: topPx,
-                            left: leftPx,
-                            width: seg.widthPx,
-                            height: BOOKING_LANE_H - 8,
-                          }}
-                          title={seg.tooltip}
-                        >
-                          <div className={`absolute inset-0 ${seg.colorClass}`} />
-                          <div className="absolute inset-0 bg-neutral-950/55" />
-                          <div className="relative h-full flex items-center justify-center text-[10px] font-semibold text-neutral-100 tabular-nums">
-                            {seg.label}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {/* Status-Overlay (Urlaub / Ü-Abbau / Krank) */}
-                    {renderStatusOverlay(rowId, weekRow)}
-
-                    {/* Projektblöcke */}
-                    {rowParts.map((p) => {
-                      const isDragging = draggingId === p.projectId;
-                      const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
-
-                      const blockLeft = p.startCol * CELL_W + 2;
-                      const blockTop = 2;
-                      const blockW = p.span * CELL_W - 4;
-                      const blockH = PROJECT_BAND_H - 4;
-
-                      const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
-                      const planMin = Math.max(0, p.planMinuten);
-
-                      return (
-                        <div
-                          key={p.key}
-                          draggable
-                          onDragStart={(e) => onDragStart(e, p.projectId)}
-                          onDragEnd={onDragEnd}
-                          className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
-                            isDragging
-                              ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
-                              : isRunningProject
-                              ? "border-blue-500 bg-neutral-900 text-neutral-100"
-                              : "border-neutral-700 bg-neutral-900 text-neutral-100"
-                          }`}
-                          style={{ top: blockTop, left: blockLeft, width: blockW, height: blockH }}
-                          title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${
-                            p.firstIso ?? "—"
-                          }`}
-                        >
-                          {/* Raster im Block + Freitag/Samstag-Cut */}
-                          <div className="absolute inset-0 flex">
-                            {Array.from({ length: p.span }).map((_, i) => {
-                              const cellDate = dateForCol(p.weekRow, p.startCol + i);
-                              const dow = cellDate.getUTCDay();
-                              const isFriOrSat = dow === 5 || dow === 6;
-
-                              return (
-                                <div
-                                  key={i}
-                                  className={`relative h-full border-r border-neutral-800/60 ${
-                                    isFriOrSat ? "bg-neutral-900" : "bg-neutral-950"
-                                  }`}
-                                  style={{ width: CELL_W }}
-                                >
-                                  {isFriOrSat ? (
-                                    <>
-                                      <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
-                                      <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
-                                      <div
-                                        className="absolute inset-0 opacity-40"
-                                        style={{
-                                          backgroundImage:
-                                            "repeating-linear-gradient(135deg, rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 4px, rgba(0,0,0,0) 4px, rgba(0,0,0,0) 10px)",
-                                        }}
-                                      />
-                                    </>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Step 2C: Plan-Segmente (blass in Meisterfarbe) + Label pro Segment */}
-                          <div className="absolute inset-0 pointer-events-none">
-                            {buildPlanOutlineSegments(p, rowId).map((s, idx) => {
-                              const softBg = meisterSoftBgClass(p.meisterId);
-
-                              // Label nur anzeigen, wenn Segment breit genug ist (sonst wird es nur Lärm)
-                              const showLabel = s.span * CELL_W >= 140;
-
-                              return (
-                                <div
-                                  key={`${p.key}__planseg__${idx}`}
-                                  className={`absolute top-[1px] bottom-[1px] rounded-lg border border-orange-500/80 ${softBg}`}
-                                  style={{
-                                    left: s.start * CELL_W + 1,
-                                    width: s.span * CELL_W - 2,
-                                  }}
-                                >
-                                  {/* Kontrast-Layer über dem SoftBg, damit Text/Overlays lesbar bleiben */}
-                                  <div className="absolute inset-0 bg-neutral-950/35" />
-
-                                  {showLabel ? (
-                                    <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
-                                      <div className="ml-2 flex items-center gap-2 min-w-0 px-2 py-1 rounded bg-neutral-950/55 border border-neutral-200/10">
-                                        <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
-                                        <div className="truncate text-[11px] font-semibold text-neutral-50">{p.name}</div>
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Fortschritt */}
-                          <div className="absolute inset-0">{renderProjectProgressOverlay(p)}</div>
-                        </div>
-                      );
-                    })}
+                <div
+                  key={idx}
+                  className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
+                    isCurrent
+                      ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70"
+                      : "bg-neutral-900 text-neutral-300"
+                  }`}
+                  style={{ width: 6 * CELL_W, height: 40 }}
+                >
+                  <div>KW {kw}</div>
+                  <div className={`${isCurrent ? "text-neutral-900" : "text-neutral-500"} text-[10px] font-medium`}>
+                    {from} – {to}
                   </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Tage */}
+          <div className="flex border-b border-neutral-800">
+            <div
+              className="shrink-0 border-r border-neutral-800 px-2 py-2 text-xs text-neutral-400"
+              style={{ width: NAME_COL_W }}
+            >
+              Mitarbeiter
+            </div>
+
+            {Array.from({ length: COLS }).map((_, i) => {
+              const label = DAY_LABELS[i % 6];
+              const isWeekBoundary = i % 6 === 0;
+              const isActive = activeCol === i;
+
+              const d = dateForCol(weekRow, i);
+              const dateLabel = ddmm(d);
+
+              return (
+                <div
+                  key={i}
+                  className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
+                    isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
+                  } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
+                  style={{ width: CELL_W }}
+                >
+                  <div className="leading-4">{label}</div>
+                  <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Mitarbeiterzeilen */}
+          {mitarbeiter.map((m: any) => {
+            const rowId = String(m.id);
+            const rowParts = parts.filter((p) => String(p.rowId) === rowId);
+            const packed = packDaySegments(rowId, weekRow);
+
+            return (
+              <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
+                <div
+                  className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
+                  style={{ width: NAME_COL_W, height: ROW_H }}
+                >
+                  <div className="truncate font-medium">{m.name}</div>
+                </div>
+
+                <div className="relative" style={{ width: COLS * CELL_W, height: ROW_H }}>
+                  {/* Raster + Drop-Zellen */}
+                  <div className="absolute inset-0">
+                    {Array.from({ length: COLS }).map((_, col) => {
+                      const isWeekBoundary = col % 6 === 0;
+                      const isActive = activeCol === col;
+
+                      return (
+                        <div
+                          key={col}
+                          className={`absolute top-0 bottom-0 border-r border-neutral-800 ${
+                            isWeekBoundary ? "bg-neutral-900/35" : "bg-neutral-950"
+                          } ${isActive ? "bg-blue-500/5" : ""}`}
+                          style={{ left: col * CELL_W, width: CELL_W }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
+                        >
+                          <div
+                            className="absolute left-0 right-0 border-t border-neutral-800/70"
+                            style={{ top: PROJECT_BAND_H }}
+                          />
+                          {Array.from({ length: BOOKING_LANES - 1 }).map((__, i) => (
+                            <div
+                              key={i}
+                              className="absolute left-0 right-0 border-t border-neutral-800/40"
+                              style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Buchungs-Segmente */}
+                  {packed.map((seg) => {
+                    const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
+                    const leftPx = seg.col * CELL_W + seg.leftPx;
+
+                    return (
+                      <div
+                        key={seg.key}
+                        className="absolute z-10 rounded-md border border-neutral-800 overflow-hidden"
+                        style={{
+                          top: topPx,
+                          left: leftPx,
+                          width: seg.widthPx,
+                          height: BOOKING_LANE_H - 8,
+                        }}
+                        title={seg.tooltip}
+                      >
+                        <div className={`absolute inset-0 ${seg.colorClass}`} />
+                        <div className="absolute inset-0 bg-neutral-950/55" />
+                        <div className="relative h-full flex items-center justify-center text-[10px] font-semibold text-neutral-100 tabular-nums">
+                          {seg.label}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Status-Overlay (Urlaub / Ü-Abbau / Krank) */}
+                  {renderStatusOverlay(rowId, weekRow)}
+
+                  {/* Projektblöcke (Step 2D: echte Segment-Blöcke, Lücken sind frei) */}
+                  {rowParts.map((p) => {
+                    const isDragging = draggingId === p.projectId;
+                    const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
+
+                    const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
+                    const planMin = Math.max(0, p.planMinuten);
+
+                    const title = `${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(
+                      planMin
+                    )}\nStart: ${p.firstIso ?? "—"}`;
+
+                    const segs = buildPlanOutlineSegments(p, rowId);
+                    if (segs.length === 0) return null;
+
+                    return (
+                      <React.Fragment key={p.key}>
+                        {segs.map((s, idx) => {
+                          const softBg = meisterSoftBgClass(p.meisterId);
+
+                          const segLeft = (p.startCol + s.start) * CELL_W + 2;
+                          const segTop = 2;
+                          const segW = s.span * CELL_W - 4;
+                          const segH = PROJECT_BAND_H - 4;
+
+                          const segPart: BlockPart = {
+                            ...p,
+                            key: `${p.key}__seg__${idx}`,
+                            startCol: p.startCol + s.start,
+                            span: s.span,
+                            relStart: p.relStart + s.start,
+                          };
+
+                          const showLabel = s.span * CELL_W >= 140;
+
+                          return (
+                            <div
+                              key={segPart.key}
+                              draggable
+                              onDragStart={(e) => onDragStart(e, p.projectId)}
+                              onDragEnd={onDragEnd}
+                              className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
+                                isDragging
+                                  ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
+                                  : isRunningProject
+                                  ? "border-blue-500 bg-neutral-900 text-neutral-100"
+                                  : `border-orange-500/80 ${softBg} text-neutral-100`
+                              }`}
+                              style={{ top: segTop, left: segLeft, width: segW, height: segH }}
+                              title={title}
+                            >
+                              {/* Kontrast-Layer über dem SoftBg */}
+                              {!isDragging && !isRunningProject ? (
+                                <div className="absolute inset-0 bg-neutral-950/35" />
+                              ) : null}
+
+                              {/* Raster im Segment + Freitag/Samstag-Cut */}
+                              <div className="absolute inset-0 flex">
+                                {Array.from({ length: segPart.span }).map((_, i) => {
+                                  const cellDate = dateForCol(segPart.weekRow, segPart.startCol + i);
+                                  const dow = cellDate.getUTCDay();
+                                  const isFriOrSat = dow === 5 || dow === 6;
+
+                                  return (
+                                    <div
+                                      key={i}
+                                      className={`relative h-full border-r border-neutral-800/60 ${
+                                        isFriOrSat ? "bg-neutral-900" : "bg-neutral-950"
+                                      }`}
+                                      style={{ width: CELL_W }}
+                                    >
+                                      {isFriOrSat ? (
+                                        <>
+                                          <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
+                                          <div className="absolute right-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
+                                          <div
+                                            className="absolute inset-0 opacity-40"
+                                            style={{
+                                              backgroundImage:
+                                                "repeating-linear-gradient(135deg, rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 4px, rgba(0,0,0,0) 4px, rgba(0,0,0,0) 10px)",
+                                            }}
+                                          />
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Label am Segmentanfang (vertikal mittig, im Vordergrund) */}
+                              {showLabel ? (
+                                <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
+                                  <div className="ml-2 flex items-center gap-2 min-w-0 px-2 py-1 rounded bg-neutral-950/55 border border-neutral-200/10">
+                                    <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
+                                    <div className="truncate text-[11px] font-semibold text-neutral-50">{p.name}</div>
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              {/* Fortschritt (geclippt auf Segment-Part) */}
+                              <div className="absolute inset-0">{renderProjectProgressOverlay(segPart)}</div>
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
-    );
-  }
-
+    </div>
+  );
+}
   return (
     <div className="flex flex-col gap-3 relative w-full">
       {renderSection(0, topWeeks, scrollTopRef)}
