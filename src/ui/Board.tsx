@@ -1111,8 +1111,9 @@ const w = Math.min(widthPx, maxW);
       : null;
 
     return (
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
-        <div ref={scrollRef} className="overflow-x-auto">
+  <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden h-full">
+    <div ref={scrollRef} className="overflow-x-auto overflow-y-hidden h-full">
+
           <div className="min-w-max">
             {/* KW Header */}
             <div className="flex">
@@ -1355,13 +1356,15 @@ const showLabel = segW >= 140;
   }
 
   return (
-    <div className="flex flex-col gap-3 relative w-full">
+  <div className="flex flex-col relative w-full h-screen overflow-hidden">
+    <div className="flex-1 overflow-hidden">
       {renderSection(0, topWeeks, scrollTopRef)}
-      {renderSection(1, bottomWeeks, scrollBottomRef)}
-      <div className="text-xs text-neutral-500 px-2">
-        Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert).
-        Freitag und Samstag gelten als Pause, wenn dort nicht gebucht wurde.
-      </div>
     </div>
-  );
+
+    <div className="flex-1 overflow-hidden">
+      {renderSection(1, bottomWeeks, scrollBottomRef)}
+    </div>
+  </div>
+);
+
 }
