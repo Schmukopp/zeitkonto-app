@@ -334,19 +334,19 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
 }
 
 // ===== Planung (Layout) =====
-type LayoutPos = { rowId: string; startCol: number; lane?: number }; // Step 3B.2: Lane 0/1
+type LayoutPos = { rowId: string; startCol: number; lane?: number }; // Step 3B.2
 type LayoutMap = Record<string, LayoutPos>;
 
 type Block = {
   id: string;
   name: string;
   rowId: string;
-  lane: number; // Step 3B.2
-  startColTop: number; // Block-Start (verschoben auf erste Buchung)
-  spanCols: number; // dynamisch: verkürzt/verlängert
+  lane: number; // Step 3B.2: 0/1
+  startColTop: number;
+  spanCols: number;
   meisterId: string | null;
   planMinuten: number;
-  startIso: string; // Startdatum des Blocks (firstIso oder plannedStartIso)
+  startIso: string;
   firstIso: string | null;
 };
 
@@ -364,6 +364,7 @@ type BlockPart = {
   relStart: number;
   firstIso: string | null;
 };
+
 
 
 // ===== Buchungs-Packing =====
@@ -559,16 +560,17 @@ export default function Board({ state, setState, ms }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
 
-    /**
+      /**
    * Step 3B.2: Ketten-Layout NUR innerhalb einer Lane
    * - Pro Mitarbeiter 2 Lanes (0/1)
    * - Projekte in unterschiedlichen Lanes dürfen zeitlich überlappen
-   * - Innerhalb einer Lane werden sie weiterhin hintereinander gezogen (kein Overlap in derselben Lane)
+   * - Innerhalb einer Lane bleiben sie hintereinander (kein Overlap in derselben Lane)
    */
   const blocks: Block[] = useMemo(() => {
     const byRowLane = new Map<string, Block[]>();
+
     for (const b of rawBlocks) {
-      const k = `${b.rowId}__${b.lane}`;
+      const k = `${b.rowId}__${clamp(Number(b.lane ?? 0), 0, 1)}`;
       if (!byRowLane.has(k)) byRowLane.set(k, []);
       byRowLane.get(k)!.push({ ...b });
     }
@@ -576,7 +578,6 @@ export default function Board({ state, setState, ms }: Props) {
     const out: Block[] = [];
 
     const visibleSpanColsFor = (blk: Block) => {
-      // Sichtbar = alle Tage außer Fr/Sa ohne Buchung (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
       let lastVisible = -1;
       const start = parseIso(String(blk.startIso));
 
@@ -595,7 +596,7 @@ export default function Board({ state, setState, ms }: Props) {
       return Math.max(1, lastVisible + 1);
     };
 
-    for (const [key, arr] of byRowLane.entries()) {
+    for (const [, arr] of byRowLane.entries()) {
       const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
 
       let cursor = 0;
@@ -624,6 +625,7 @@ export default function Board({ state, setState, ms }: Props) {
 
     return out;
   }, [rawBlocks, projTotals.dayMin]);
+
 
 
   function splitBlock(b: Block): BlockPart[] {
@@ -686,7 +688,7 @@ export default function Board({ state, setState, ms }: Props) {
   // Drag & Drop: speichert weiterhin "Planung". Kettenlayout wird darüber gelegt.
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number }) {
+    function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
     setState((s) => {
       const next = structuredClone(s) as any;
       if (!next.boardLayout) next.boardLayout = {};
@@ -697,23 +699,58 @@ export default function Board({ state, setState, ms }: Props) {
 
   function onDragStart(e: React.DragEvent, projectId: string) {
     setDraggingId(projectId);
-    e.dataTransfer.setData("text/plain", projectId);
     e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(projectId));
+
+    // Step 3B.3: aktuelle Lane mitschicken (aus Layout, fallback 0)
+    const pos = (layout as any)?.[String(projectId)];
+    const lane = clamp(Number(pos?.lane ?? 0), 0, 1);
+    e.dataTransfer.setData("application/x-orgaboard-lane", String(lane));
   }
+
 
   function onDragEnd() {
     setDraggingId(null);
   }
 
-  function onDropOnRow(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
+      function onDropOnRow(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
     e.preventDefault();
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
     if (target.weekRow !== 0) return;
 
-    saveLayout(projectId, { rowId: String(target.rowId), startCol: clamp(target.col, 0, COLS - 1) });
+    const rowId = String(target.rowId);
+    const col = clamp(target.col, 0, COLS - 1);
+
+    // Step 3B.3: Lane vom Drag mitnehmen
+    const draggedLaneRaw = e.dataTransfer.getData("application/x-orgaboard-lane");
+    let lane = clamp(Number(draggedLaneRaw || 0), 0, 1);
+
+    // Optional: Shift toggelt Lane
+    if ((e as any).shiftKey) {
+      lane = lane === 0 ? 1 : 0;
+    }
+
+    // Wenn gewünschte Lane kollidiert, darf er in die andere Lane ausweichen (aber nur wenn nötig)
+    const laneOccupied = (testLane: number) =>
+      blockParts.some(
+        (p) =>
+          p.weekRow === 0 &&
+          String(p.rowId) === rowId &&
+          clamp(Number(p.lane ?? 0), 0, 1) === testLane &&
+          col >= p.startCol &&
+          col < p.startCol + p.span
+      );
+
+    if (laneOccupied(lane) && !laneOccupied(lane === 0 ? 1 : 0)) {
+      lane = lane === 0 ? 1 : 0;
+    }
+
+    saveLayout(projectId, { rowId, startCol: col, lane });
     setDraggingId(null);
   }
+
+
 
   // Fokus auf laufendes Projekt
   useEffect(() => {
@@ -1128,10 +1165,7 @@ export default function Board({ state, setState, ms }: Props) {
             {/* Mitarbeiterzeilen */}
             {mitarbeiter.map((m: any) => {
               const rowId = String(m.id);
-              const rowParts = parts.filter((p) => String(p.rowId) === rowId);
-                const projectLaneMap = computeProjectLaneMap(rowParts);
-
-
+              const rowParts = parts.filter((p) => String(p.rowId) === rowId)
               const pack = packDaySegments(rowId, weekRow);
               const lanes = pack.lanes;
               const rowH = rowHeightPx(lanes);
@@ -1220,9 +1254,10 @@ export default function Board({ state, setState, ms }: Props) {
                             const softBg = meisterSoftBgClass(p.meisterId);
 
                             const segLeft = (p.startCol + s.start) * CELL_W + 2;
-                            const lane = projectLaneMap.get(String(p.projectId)) ?? 0;
+                           const lane = clamp(Number(p.lane ?? 0), 0, 1);
 const segTop = 2 + lane * PROJECT_LANE_H;
 const segH = PROJECT_LANE_H - 4;
+
 
 const segW = s.span * CELL_W - 4;
                             const segPart: BlockPart = {
