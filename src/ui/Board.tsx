@@ -39,6 +39,10 @@ const BASE_CAP_MIN = 600;
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
+function calcPlannedCols(planMinuten: number): number {
+  const m = Math.max(0, Math.round(planMinuten || 0));
+  return Math.max(1, Math.ceil(m / BASE_CAP_MIN));
+}
 
 // ===== Kalenderfest (UTC) =====
 function isoDate(d: Date) {
@@ -492,11 +496,13 @@ export default function Board({ state, setState, ms }: Props) {
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
       const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
 
-      const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
-      const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
+           const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
 
-      // Ziel-Minuten: verlängert wenn über Kalk
-      const minutesTarget = Math.max(planMinuten, bookedMinuten);
+      // Board Plan Step 1:
+      // spanCols (Planungslänge) kommt ausschließlich aus kalkulierten Stunden (10h/Tag).
+      // Ist-/Überzug-/Parallelität beeinflussen NICHT die Blocklänge, nur die Füllung (Overlay).
+      const plannedCols = calcPlannedCols(planMinuten);
+
 
             // Planung -> ISO (aus Board-Grid)
       const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
@@ -510,8 +516,9 @@ export default function Board({ state, setState, ms }: Props) {
       const startIso = firstIso ?? plannedStartIso;
 
 
-      // Dynamische Dauer in Cols
-      const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
+           // Planungslänge in Cols (nur aus Planung)
+      const spanCols = clamp(plannedCols, 1, COLS * 2);
+
 
            return {
   id: pid,
@@ -818,7 +825,8 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
     const partsStartPx = p.relStart * CELL_W;
     const partsEndPx = (p.relStart + p.span) * CELL_W;
 
-    const segs: Array<{ left: number; width: number; kind: "in" | "over"; colorNode: React.ReactNode | null }> = [];
+    const segs: Array<{ left: number; width: number; kind: "in" | "over" }> = [];
+
 
         const area =
       projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
@@ -835,20 +843,7 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
 
 
 
-    function renderInColor() {
-      if (areaShares.length === 0) return <div className="h-full w-full bg-blue-500" />;
-      return (
-        <div className="h-full w-full flex">
-          {areaShares.map((x, idx) => (
-            <div
-              key={`${x.b}_${idx}`}
-              className={`h-full ${bereichColorClass(x.b)}`}
-              style={{ width: `${x.share * 100}%` }}
-            />
-          ))}
-        </div>
-      );
-    }
+    
 
     for (let localDay = 0; localDay < p.span; localDay++) {
       if (remainIn <= 0 && remainOver <= 0) break;
@@ -866,17 +861,15 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
       const key = `${p.projectId}__${dayIso}`;
       const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-      // Freitag+Samstag: wenn nicht gebucht => Pause (kein Fortschritt)
-      const dow = parseIso(dayIso).getUTCDay();
-      const isFriOrSat = dow === 5 || dow === 6;
-      if (isFriOrSat && bookedThatDay <= 0) continue;
+      // Anzeige-Regel: Blau/Rot nur bei echten Buchungen.
+// Ohne Buchung -> keine Segmente (kein Phantom-Fortschritt).
+const dayCapMin = bookedThatDay;
 
-           // C2-Regel: echte Kompression nur über tatsächlich gebuchte Minuten
-      // Wenn nichts gebucht: Default-Tag = BASE_CAP_MIN
-      const dayCapMin = bookedThatDay > 0 ? bookedThatDay : BASE_CAP_MIN;
+if (dayCapMin <= 0) continue;
 
-      const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
-      const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
+const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
+const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
+
 ;
 
       const used = takeIn > 0 ? takeIn : takeOver;
@@ -891,11 +884,11 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
 
       if (segW > 0) {
         segs.push({
-          left: segLeft - partsStartPx,
-          width: segW,
-          kind: takeIn > 0 ? "in" : "over",
-          colorNode: takeIn > 0 ? renderInColor() : null,
-        });
+  left: segLeft - partsStartPx,
+  width: segW,
+  kind: takeIn > 0 ? "in" : "over",
+});
+
       }
 
       if (takeIn > 0) remainIn -= takeIn;
@@ -907,18 +900,16 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
     return (
       <>
         {segs.map((s, idx) => {
-          if (s.kind === "in") {
-            return (
-              <div key={idx} className="absolute top-0 bottom-0" style={{ left: s.left, width: s.width }}>
-                {s.colorNode}
-                <div className="absolute inset-0 bg-blue-900/15" />
-              </div>
-            );
-          }
-          return (
-            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
-          );
-        })}
+  if (s.kind === "in") {
+    return (
+      <div key={idx} className="absolute top-0 bottom-0 bg-blue-500" style={{ left: s.left, width: s.width }}>
+        <div className="absolute inset-0 bg-blue-900/15" />
+      </div>
+    );
+  }
+  return <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />;
+})}
+
       </>
     );
   }
