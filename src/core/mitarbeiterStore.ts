@@ -107,14 +107,33 @@ function normalizeState(raw: any): MitarbeiterState {
   const selRaw = typeof raw?.selectedId === "string" ? raw.selectedId : null;
   const selOk = selRaw && list.some((m) => m.id === selRaw) ? selRaw : (list[0]?.id ?? null);
 
-  // Wenn komplett leer: seed erzeugen
-  if (list.length === 0) {
-    const seed = defaultMitarbeiter("m1", "Mitarbeiter");
-    return { selectedId: seed.id, mitarbeiter: [seed] };
+  // Demo-Fall erkennen:
+  // - komplett leer ODER
+  // - exakt 1 Eintrag, der wie der Default-Seed wirkt (m1 / Mitarbeiter)
+  const isDefaultOnly =
+    list.length === 1 &&
+    list[0]?.id === "m1" &&
+    (list[0]?.name ?? "").trim() === "Mitarbeiter";
+
+  // Wenn leer ODER nur Default: 10 Demo-Mitarbeiter erzeugen
+  if (list.length === 0 || isDefaultOnly) {
+    const demo: Mitarbeiter[] = [];
+    for (let i = 1; i <= 10; i++) {
+      const id = `m${i}`;
+      const name = i === 1 ? "Mitarbeiter" : `Mitarbeiter ${i}`;
+      demo.push(defaultMitarbeiter(id, name));
+    }
+
+    // selectedId: wenn raw was Sinnvolles liefert, nutzen; sonst m1
+    const demoSelRaw = typeof raw?.selectedId === "string" ? raw.selectedId : null;
+    const demoSelOk = demoSelRaw && demo.some((m) => m.id === demoSelRaw) ? demoSelRaw : "m1";
+
+    return { selectedId: demoSelOk, mitarbeiter: demo };
   }
 
   return { selectedId: selOk, mitarbeiter: list };
 }
+
 
 export function defaultMitarbeiter(id = "m1", name = "Mitarbeiter"): Mitarbeiter {
   return {
