@@ -1,6 +1,6 @@
 import React from "react";
 import type { State } from "../core/timeStore";
-import { createProject, setProjectActive, upsertProject } from "../core/timeStore";
+import { createProject, setProjectActive, upsertProject, archiveProject } from "../core/timeStore";
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 
 function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement>) {
@@ -27,8 +27,8 @@ function getKalkMinuten(proj: any, b: Bereich): number {
 }
 
 function setKalkMinuten(proj: any, b: Bereich, kalkMinuten: number) {
-  const aa = (proj?.arbeitsarten && typeof proj.arbeitsarten === "object") ? proj.arbeitsarten : {};
-  const prev = (aa?.[b] && typeof aa[b] === "object") ? aa[b] : {};
+  const aa = proj?.arbeitsarten && typeof proj.arbeitsarten === "object" ? proj.arbeitsarten : {};
+  const prev = aa?.[b] && typeof aa[b] === "object" ? aa[b] : {};
   return {
     ...proj,
     arbeitsarten: {
@@ -64,20 +64,36 @@ export default function AdminProjekte(p: Props) {
         .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }))
     : [];
 
-  function deleteProjekt(projektId: string) {
+  function archiveProjekt(proj: any) {
+    if (!proj?.abschluss) {
+      window.alert("Archivieren ist erst nach dem Abschluss möglich.");
+      return;
+    }
+
+    const defaultYear = String(
+      proj?.archivJahr ??
+        new Date(proj?.abschluss?.abgeschlossenAt ?? Date.now()).getFullYear()
+    );
+
+    const yearStr = window.prompt("In welches Archiv-Jahr soll das Projekt verschoben werden?", defaultYear);
+    if (yearStr == null) return;
+
+    const year = Number(String(yearStr).trim());
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      window.alert("Ungültiges Jahr. Bitte z. B. 2026 eingeben.");
+      return;
+    }
+
     const ok = window.confirm(
-      "Projekt wirklich löschen?\n\n" +
+      `Projekt wirklich ins Archiv ${year} verschieben?\n\n` +
         "Hinweis:\n" +
-        "• Das Projekt wird entfernt\n" +
+        "• Projekt verschwindet aus Board & Heute\n" +
         "• Buchungen bleiben erhalten (Historie/Woche/Abschluss)\n\n" +
         "Fortfahren?"
     );
     if (!ok) return;
 
-    p.setState((s) => ({
-      ...s,
-      projects: (s.projects ?? []).filter((pr: any) => pr.id !== projektId),
-    }));
+    p.setState((s) => archiveProject(s, String(proj.id), year));
   }
 
   return (
@@ -117,6 +133,8 @@ export default function AdminProjekte(p: Props) {
           const hasAreaCalc = kMinTotal > 0;
           const effectiveMin = hasAreaCalc ? kMinTotal : fallbackMin;
 
+          const isArchiv = proj?.status === "archiv";
+
           return (
             <div
               key={proj.id}
@@ -124,7 +142,9 @@ export default function AdminProjekte(p: Props) {
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-medium">
-                  {proj.active !== false ? (
+                  {isArchiv ? (
+                    <span className="text-neutral-400">Archiv {proj.archivJahr ?? ""}</span>
+                  ) : proj.active !== false ? (
                     <span className="text-neutral-100">Aktiv</span>
                   ) : (
                     <span className="text-neutral-400">Inaktiv</span>
@@ -149,12 +169,20 @@ export default function AdminProjekte(p: Props) {
                     {proj.active !== false ? "Deaktivieren" : "Aktivieren"}
                   </button>
 
+                  {/* ✅ statt Löschen: Archivieren (nur nach Abschluss) */}
                   <button
-                    className="rounded-xl border border-red-600/60 bg-neutral-950 px-3 py-2 text-sm text-red-400 hover:bg-red-600 hover:text-neutral-950"
-                    onClick={() => deleteProjekt(proj.id)}
+                    className={
+                      "rounded-xl border px-3 py-2 text-sm " +
+                      (proj?.abschluss
+                        ? "border-orange-500 bg-neutral-950 text-orange-300 hover:bg-orange-500 hover:text-neutral-950"
+                        : "border-neutral-700 bg-neutral-950 text-neutral-500 cursor-not-allowed")
+                    }
+                    onClick={() => archiveProjekt(proj)}
                     type="button"
+                    disabled={!proj?.abschluss}
+                    title={proj?.abschluss ? "Projekt ins Archiv verschieben" : "Abschluss erforderlich"}
                   >
-                    Löschen
+                    Ins Archiv
                   </button>
                 </div>
               </div>
@@ -392,4 +420,3 @@ export default function AdminProjekte(p: Props) {
     </div>
   );
 }
-
