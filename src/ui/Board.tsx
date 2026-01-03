@@ -20,7 +20,7 @@ const DAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"] as const;
 
 const COLS = 24; // 4 Wochen * 6 Tage
 const CELL_W = 80;
-const NAME_COL_W = 240;
+const NAME_COL_W = 150;
 
 // ===== Step 3C: Horizontale Tagesgewichtung (nur Darstellung) =====
 // Mo–Do breiter | Fr/Sa schmal
@@ -1151,7 +1151,8 @@ const w = Math.min(widthPx, maxW);
             {/* Tage */}
             <div className="flex border-b border-neutral-800">
               <div
-                className="shrink-0 border-r border-neutral-800 px-2 py-2 text-xs text-neutral-400"
+                className="shrink-0 border-r border-neutral-800 px-2 py-1 text-[11px] text-neutral-400"
+
                 style={{ width: NAME_COL_W }}
               >
                 Mitarbeiter
@@ -1191,7 +1192,8 @@ const w = Math.min(widthPx, maxW);
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
                   <div
-                    className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
+                    className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-[13px] text-neutral-200 bg-neutral-900/60"
+
                     style={{ width: NAME_COL_W, height: rowH }}
                   >
                     <div className="truncate font-medium">{m.name}</div>
