@@ -25,6 +25,12 @@ const NAME_COL_W = 240;
 // Band 1 (oben): Projektspur
 const PROJECT_BAND_H = 32;
 
+// Step 3B.1: Projekte parallel in der Projektspur (oben)
+// Wir teilen die Projektspur (32px) in 2 Lanes à 16px (capped, damit das Board stabil bleibt)
+const MAX_PROJECT_LANES = 2;
+const PROJECT_LANE_H = PROJECT_BAND_H / MAX_PROJECT_LANES; // 16px
+
+
 // Band 2 (unten): Buchungen (Auto-Pack)
 // Step 3A: Lanes werden pro Mitarbeiter-Zeile dynamisch erweitert
 const MIN_BOOKING_LANES = 2;
@@ -328,13 +334,14 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
 }
 
 // ===== Planung (Layout) =====
-type LayoutPos = { rowId: string; startCol: number };
+type LayoutPos = { rowId: string; startCol: number; lane?: number }; // Step 3B.2: Lane 0/1
 type LayoutMap = Record<string, LayoutPos>;
 
 type Block = {
   id: string;
   name: string;
   rowId: string;
+  lane: number; // Step 3B.2
   startColTop: number; // Block-Start (verschoben auf erste Buchung)
   spanCols: number; // dynamisch: verkürzt/verlängert
   meisterId: string | null;
@@ -348,6 +355,7 @@ type BlockPart = {
   projectId: string;
   name: string;
   rowId: string;
+  lane: number; // Step 3B.2
   weekRow: 0 | 1;
   startCol: number;
   span: number;
@@ -356,6 +364,7 @@ type BlockPart = {
   relStart: number;
   firstIso: string | null;
 };
+
 
 // ===== Buchungs-Packing =====
 type PackedSeg = {
@@ -511,6 +520,8 @@ export default function Board({ state, setState, ms }: Props) {
       const pos = layout[pid] ?? autoFallback[pid];
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
       const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
+      const lane = clamp(Number(pos?.lane ?? 0), 0, 1); // Step 3B.2: 2 Lanes
+
 
       const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
       const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
@@ -536,6 +547,7 @@ export default function Board({ state, setState, ms }: Props) {
         id: pid,
         name: String(p.name ?? "Projekt"),
         rowId,
+        lane,
         startColTop,
         spanCols,
         meisterId,
@@ -547,45 +559,46 @@ export default function Board({ state, setState, ms }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
 
-  /**
-   * Ketten-Layout:
-   * - Projekte pro row nach startColTop sortieren
-   * - erstes Projekt bleibt, alle folgenden werden direkt dahinter gesetzt
+    /**
+   * Step 3B.2: Ketten-Layout NUR innerhalb einer Lane
+   * - Pro Mitarbeiter 2 Lanes (0/1)
+   * - Projekte in unterschiedlichen Lanes dürfen zeitlich überlappen
+   * - Innerhalb einer Lane werden sie weiterhin hintereinander gezogen (kein Overlap in derselben Lane)
    */
   const blocks: Block[] = useMemo(() => {
-    const byRow = new Map<string, Block[]>();
+    const byRowLane = new Map<string, Block[]>();
     for (const b of rawBlocks) {
-      if (!byRow.has(b.rowId)) byRow.set(b.rowId, []);
-      byRow.get(b.rowId)!.push({ ...b });
+      const k = `${b.rowId}__${b.lane}`;
+      if (!byRowLane.has(k)) byRowLane.set(k, []);
+      byRowLane.get(k)!.push({ ...b });
     }
 
     const out: Block[] = [];
-    for (const [rowId, arr] of byRow.entries()) {
+
+    const visibleSpanColsFor = (blk: Block) => {
+      // Sichtbar = alle Tage außer Fr/Sa ohne Buchung (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
+      let lastVisible = -1;
+      const start = parseIso(String(blk.startIso));
+
+      for (let off = 0; off < blk.spanCols; off++) {
+        const dayIso = isoDate(addDays(start, off));
+        const dow = parseIso(dayIso).getUTCDay();
+        const isFriOrSat = dow === 5 || dow === 6;
+
+        const key = `${blk.id}__${dayIso}`;
+        const booked = projTotals.dayMin.get(key) ?? 0;
+
+        const visible = !(isFriOrSat && booked <= 0);
+        if (visible) lastVisible = off;
+      }
+
+      return Math.max(1, lastVisible + 1);
+    };
+
+    for (const [key, arr] of byRowLane.entries()) {
       const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
 
       let cursor = 0;
-
-      const visibleSpanColsFor = (blk: Block) => {
-        // Sichtbar = alle Tage außer Fr/Sa ohne Buchung
-        // (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
-        let lastVisible = -1;
-        const start = parseIso(String(blk.startIso));
-
-        for (let off = 0; off < blk.spanCols; off++) {
-          const dayIso = isoDate(addDays(start, off));
-          const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
-          const isFriOrSat = dow === 5 || dow === 6;
-
-          const key = `${blk.id}__${dayIso}`;
-          const booked = projTotals.dayMin.get(key) ?? 0;
-
-          const visible = !(isFriOrSat && booked <= 0);
-          if (visible) lastVisible = off;
-        }
-
-        // mindestens 1 Spalte „belegt“, damit Cursor nicht rückwärts läuft
-        return Math.max(1, lastVisible + 1);
-      };
 
       for (let i = 0; i < sorted.length; i++) {
         const b = sorted[i];
@@ -610,7 +623,8 @@ export default function Board({ state, setState, ms }: Props) {
     }
 
     return out;
-  }, [rawBlocks]);
+  }, [rawBlocks, projTotals.dayMin]);
+
 
   function splitBlock(b: Block): BlockPart[] {
     const parts: BlockPart[] = [];
@@ -625,6 +639,7 @@ export default function Board({ state, setState, ms }: Props) {
         projectId: b.id,
         name: b.name,
         rowId: b.rowId,
+          lane: b.lane,
         weekRow: 0,
         startCol: topStart,
         span: topSpan,
@@ -642,7 +657,8 @@ export default function Board({ state, setState, ms }: Props) {
         projectId: b.id,
         name: b.name,
         rowId: b.rowId,
-        weekRow: 1,
+          lane: b.lane,
+       weekRow: 1,
         startCol: 0,
         span: Math.min(rest, COLS),
         meisterId: b.meisterId,
@@ -996,6 +1012,45 @@ export default function Board({ state, setState, ms }: Props) {
       </>
     );
   }
+  function computeProjectLaneMap(parts: BlockPart[]) {
+    // Greedy Lane-Packing nach Zeit-Überlappung, capped auf MAX_PROJECT_LANES
+    // Lane-Entscheidung pro Projekt (projectId), nicht pro Segment
+    const uniq: Array<{ projectId: string; start: number; end: number }> = [];
+    const seen = new Set<string>();
+
+    for (const p of parts) {
+      const pid = String(p.projectId);
+      if (seen.has(pid)) continue;
+      seen.add(pid);
+      uniq.push({ projectId: pid, start: p.startCol, end: p.startCol + p.span });
+    }
+
+    uniq.sort((a, b) => a.start - b.start);
+
+    const laneEnd: number[] = Array.from({ length: MAX_PROJECT_LANES }, () => -1);
+    const map = new Map<string, number>();
+
+    for (const it of uniq) {
+      let placed = false;
+
+      for (let lane = 0; lane < MAX_PROJECT_LANES; lane++) {
+        if (it.start >= laneEnd[lane]) {
+          map.set(it.projectId, lane);
+          laneEnd[lane] = it.end;
+          placed = true;
+          break;
+        }
+      }
+
+      // Wenn alle voll: in letzte Lane "quetschen" (capped Verhalten)
+      if (!placed) {
+        map.set(it.projectId, MAX_PROJECT_LANES - 1);
+        laneEnd[MAX_PROJECT_LANES - 1] = Math.max(laneEnd[MAX_PROJECT_LANES - 1], it.end);
+      }
+    }
+
+    return map;
+  }
 
         function renderSection(
     weekRow: 0 | 1,
@@ -1074,6 +1129,8 @@ export default function Board({ state, setState, ms }: Props) {
             {mitarbeiter.map((m: any) => {
               const rowId = String(m.id);
               const rowParts = parts.filter((p) => String(p.rowId) === rowId);
+                const projectLaneMap = computeProjectLaneMap(rowParts);
+
 
               const pack = packDaySegments(rowId, weekRow);
               const lanes = pack.lanes;
@@ -1163,10 +1220,11 @@ export default function Board({ state, setState, ms }: Props) {
                             const softBg = meisterSoftBgClass(p.meisterId);
 
                             const segLeft = (p.startCol + s.start) * CELL_W + 2;
-                            const segTop = 2;
-                            const segW = s.span * CELL_W - 4;
-                            const segH = PROJECT_BAND_H - 4;
+                            const lane = projectLaneMap.get(String(p.projectId)) ?? 0;
+const segTop = 2 + lane * PROJECT_LANE_H;
+const segH = PROJECT_LANE_H - 4;
 
+const segW = s.span * CELL_W - 4;
                             const segPart: BlockPart = {
                               ...p,
                               key: `${p.key}__seg__${idx}`,
