@@ -5,7 +5,6 @@ import type { MitarbeiterState } from "../core/mitarbeiterStore";
 import { DEFAULT_WOCHENMODELL, sollMinutenForIsoDate } from "../core/workModel";
 import { getStatus } from "../core/timeRules";
 
-
 type Props = {
   state: State;
   setState: (updater: (s: State) => State) => void;
@@ -14,7 +13,6 @@ type Props = {
   activeBookingProjektId: string;
   setActiveBookingProjektId: (pid: string) => void;
 };
-
 
 type Bereich = "maschine" | "bank" | "lack" | "montage";
 
@@ -38,8 +36,6 @@ const BASE_CAP_MIN = 600;
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-
-
 
 // ===== Kalenderfest (UTC) =====
 function isoDate(d: Date) {
@@ -141,8 +137,6 @@ function pickIso(e: any): string {
   }
   return "";
 }
-
-
 
 function pickProjektId(e: any): string {
   const cands = [e?.projektId, e?.projectId, e?.projektID, e?.projectID, e?.pid];
@@ -341,7 +335,6 @@ type Block = {
   firstIso: string | null;
 };
 
-
 type BlockPart = {
   key: string;
   projectId: string;
@@ -432,9 +425,7 @@ export default function Board({ state, setState, ms }: Props) {
       if (layout[pid]) continue;
 
       const defaultOperativ = pickOperativDefaultId(p);
-      const fallbackRowId = String(
-        defaultOperativ ?? mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ?? "m1"
-      );
+      const fallbackRowId = String(defaultOperativ ?? mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ?? "m1");
       rr++;
 
       out[pid] = { rowId: fallbackRowId, startCol: clamp(cursor, 0, COLS - 1) };
@@ -445,56 +436,55 @@ export default function Board({ state, setState, ms }: Props) {
   }, [activeProjects, layout, mitarbeiter]);
 
   /**
- * Dynamische Dauer in Cols (Mo–Sa Raster):
- * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
- * - Tageskapazität basiert auf Parallelität:
- *     dayCap = BASE_CAP_MIN * workerCountThatDay
- *   workerCountThatDay = Anzahl Mitarbeiter, die an diesem Projekt an diesem Tag gebucht haben
- * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte zählt, verbraucht aber keine Minuten)
- */
-function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
-  if (minutesTarget <= 0) return 1;
+   * Dynamische Dauer in Cols (Mo–Sa Raster):
+   * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
+   * - Tageskapazität basiert auf Parallelität:
+   *     dayCap = BASE_CAP_MIN * workerCountThatDay
+   *   workerCountThatDay = Anzahl Mitarbeiter, die an diesem Projekt an diesem Tag gebucht haben
+   * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte zählt, verbraucht aber keine Minuten)
+   */
+  function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
+    if (minutesTarget <= 0) return 1;
 
-  let remain = minutesTarget;
-  let cols = 0;
+    let remain = minutesTarget;
+    let cols = 0;
 
-  const MAX_COLS = COLS * 2; // visuell wird eh bei 2 Reihen abgeschnitten
+    const MAX_COLS = COLS * 2; // visuell wird eh bei 2 Reihen abgeschnitten
 
-  const start = parseIso(startIso);
+    const start = parseIso(startIso);
 
-  for (let i = 0; i < MAX_COLS; i++) {
-    const dayIso = isoDate(addDays(start, i));
-    const key = `${projectId}__${dayIso}`;
+    for (let i = 0; i < MAX_COLS; i++) {
+      const dayIso = isoDate(addDays(start, i));
+      const key = `${projectId}__${dayIso}`;
 
-    const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
+      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-    const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
-    const isFriOrSat = dow === 5 || dow === 6;
+      const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+      const isFriOrSat = dow === 5 || dow === 6;
 
-    // Freitag + Samstag:
-    // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
-    // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
-    if (isFriOrSat && bookedThatDay <= 0) {
+      // Freitag + Samstag:
+      // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
+      // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
+      if (isFriOrSat && bookedThatDay <= 0) {
+        cols++;
+        continue;
+      }
+
+      // Parallelität: wie viele Mitarbeiter haben an diesem Tag am Projekt gebucht?
+      const workerCount = Math.max(1, projTotals.dayWorkers.get(key)?.size ?? 1);
+
+      // Tageskapazität ist SOLL (10h pro Worker), NICHT "bookedThatDay"
+      const dayCap = BASE_CAP_MIN * workerCount;
+
+      const take = Math.min(remain, dayCap);
+      remain -= take;
+
       cols++;
-      continue;
+      if (remain <= 0) break;
     }
 
-    // Parallelität: wie viele Mitarbeiter haben an diesem Tag am Projekt gebucht?
-    const workerCount = Math.max(1, projTotals.dayWorkers.get(key)?.size ?? 1);
-
-    // Tageskapazität ist SOLL (10h pro Worker), NICHT "bookedThatDay"
-    const dayCap = BASE_CAP_MIN * workerCount;
-
-    const take = Math.min(remain, dayCap);
-    remain -= take;
-
-    cols++;
-    if (remain <= 0) break;
+    return Math.max(1, cols);
   }
-
-  return Math.max(1, cols);
-}
-
 
   // Blocks: echter Start + dynamische Länge
   const rawBlocks: Block[] = useMemo(() => {
@@ -506,7 +496,7 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
 
       const pos = layout[pid] ?? autoFallback[pid];
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
-            const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
+      const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
 
       const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
       const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
@@ -539,9 +529,6 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
         startIso,
         firstIso,
       };
-
-
-
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
@@ -562,51 +549,50 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
     for (const [rowId, arr] of byRow.entries()) {
       const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
 
-          let cursor = 0;
+      let cursor = 0;
 
-    const visibleSpanColsFor = (blk: Block) => {
-      // Sichtbar = alle Tage außer Fr/Sa ohne Buchung
-      // (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
-      let lastVisible = -1;
-      const start = parseIso(String(blk.startIso));
+      const visibleSpanColsFor = (blk: Block) => {
+        // Sichtbar = alle Tage außer Fr/Sa ohne Buchung
+        // (Fr/Sa zählen nur, wenn dort wirklich gebucht wurde)
+        let lastVisible = -1;
+        const start = parseIso(String(blk.startIso));
 
-      for (let off = 0; off < blk.spanCols; off++) {
-        const dayIso = isoDate(addDays(start, off));
-        const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
-        const isFriOrSat = dow === 5 || dow === 6;
+        for (let off = 0; off < blk.spanCols; off++) {
+          const dayIso = isoDate(addDays(start, off));
+          const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+          const isFriOrSat = dow === 5 || dow === 6;
 
-        const key = `${blk.id}__${dayIso}`;
-        const booked = projTotals.dayMin.get(key) ?? 0;
+          const key = `${blk.id}__${dayIso}`;
+          const booked = projTotals.dayMin.get(key) ?? 0;
 
-        const visible = !(isFriOrSat && booked <= 0);
-        if (visible) lastVisible = off;
-      }
+          const visible = !(isFriOrSat && booked <= 0);
+          if (visible) lastVisible = off;
+        }
 
-      // mindestens 1 Spalte „belegt“, damit Cursor nicht rückwärts läuft
-      return Math.max(1, lastVisible + 1);
-    };
+        // mindestens 1 Spalte „belegt“, damit Cursor nicht rückwärts läuft
+        return Math.max(1, lastVisible + 1);
+      };
 
-    for (let i = 0; i < sorted.length; i++) {
-      const b = sorted[i];
+      for (let i = 0; i < sorted.length; i++) {
+        const b = sorted[i];
 
-      if (i === 0) {
+        if (i === 0) {
+          const vis = visibleSpanColsFor(b);
+          cursor = clamp(b.startColTop, 0, COLS - 1) + vis;
+          out.push(b);
+          continue;
+        }
+
+        const desiredStart = clamp(b.startColTop, 0, COLS - 1);
+        const newStart = clamp(Math.max(desiredStart, cursor), 0, COLS - 1);
+
+        b.startColTop = newStart;
+
         const vis = visibleSpanColsFor(b);
-        cursor = clamp(b.startColTop, 0, COLS - 1) + vis;
+        cursor = newStart + vis;
+
         out.push(b);
-        continue;
       }
-
-      const desiredStart = clamp(b.startColTop, 0, COLS - 1);
-      const newStart = clamp(Math.max(desiredStart, cursor), 0, COLS - 1);
-
-      b.startColTop = newStart;
-
-      const vis = visibleSpanColsFor(b);
-      cursor = newStart + vis;
-
-      out.push(b);
-    }
-
     }
 
     return out;
@@ -774,7 +760,7 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
 
     return out;
   }
-  
+
   // Fokus auf laufendes Projekt
   useEffect(() => {
     const pid = running?.projektId ? String(running.projektId) : null;
@@ -791,7 +777,7 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
     sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
   }, [running?.projektId, blockParts]);
 
-    // ===== Step 2: Plan-Linie mit Lücken =====
+  // ===== Step 2: Plan-Linie mit Lücken =====
   // Regel: Wenn dieses Projekt an einem Tag KEINE Buchung hat, aber der Mitarbeiter an dem Tag
   // an einem ANDEREN Projekt gebucht ist, dann wird die Plan-Outline an diesem Tag unterbrochen.
   function hasOtherProjectBooking(rowId: string, iso: string, projectId: string): boolean {
@@ -829,49 +815,48 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
     return segs;
   }
 
-// ===== Status-Overlay (Urlaub / Ü-Abbau / Krank) =====
-function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
-  const out: React.ReactNode[] = [];
+  // ===== Status-Overlay (Urlaub / Ü-Abbau / Krank) =====
+  function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
+    const out: React.ReactNode[] = [];
 
-  for (let col = 0; col < COLS; col++) {
-    const iso = isoDate(dateForCol(weekRow, col));
-    const status = getStatus((state as any)?.buchungen ?? [], iso, rowId);
-    if (!status) continue;
+    for (let col = 0; col < COLS; col++) {
+      const iso = isoDate(dateForCol(weekRow, col));
+      const status = getStatus((state as any)?.buchungen ?? [], iso, rowId);
+      if (!status) continue;
 
-    let label = "";
-    let color = "";
+      let label = "";
+      let color = "";
 
-    if (status.art === "urlaub") {
-      label = "Urlaub";
-      color = "bg-emerald-600/80";
-    } else if (status.art === "ueberstundenabbau") {
-      label = "Ü-Abbau";
-      color = "bg-indigo-600/80";
-    } else if (status.art === "krank") {
-      label = "Krank";
-      color = "bg-rose-600/80";
-    } else {
-      continue;
+      if (status.art === "urlaub") {
+        label = "Urlaub";
+        color = "bg-emerald-600/80";
+      } else if (status.art === "ueberstundenabbau") {
+        label = "Ü-Abbau";
+        color = "bg-indigo-600/80";
+      } else if (status.art === "krank") {
+        label = "Krank";
+        color = "bg-rose-600/80";
+      } else {
+        continue;
+      }
+
+      out.push(
+        <div
+          key={`${rowId}__${iso}__status`}
+          className="absolute z-[5] rounded-md text-[10px] font-semibold text-neutral-950 px-1.5 py-0.5 shadow"
+          style={{
+            left: col * CELL_W + 6,
+            top: PROJECT_BAND_H + BOOKING_LANES * BOOKING_LANE_H - 18,
+          }}
+          title={`${label} · ${iso}`}
+        >
+          <div className={`rounded ${color} px-1.5 py-0.5`}>{label}</div>
+        </div>
+      );
     }
 
-    out.push(
-      <div
-        key={`${rowId}__${iso}__status`}
-        className="absolute z-[5] rounded-md text-[10px] font-semibold text-neutral-950 px-1.5 py-0.5 shadow"
-        style={{
-          left: col * CELL_W + 6,
-          top: PROJECT_BAND_H + BOOKING_LANES * BOOKING_LANE_H - 18,
-        }}
-        title={`${label} · ${iso}`}
-      >
-        <div className={`rounded ${color} px-1.5 py-0.5`}>{label}</div>
-      </div>
-    );
+    return out;
   }
-
-  return out;
-}
-
 
   // ===== Projekt-Fortschritt-Overlay (parallel = mehr Tageskapazität => echte Kalender-Kompression) =====
   function renderProjectProgressOverlay(p: BlockPart) {
@@ -891,24 +876,17 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
 
     const segs: Array<{ left: number; width: number; kind: "in" | "over" }> = [];
 
-
-        const area =
-      projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
+    const area = projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
 
     const rawTotal = Math.max(0, (area.maschine ?? 0) + (area.bank ?? 0) + (area.lack ?? 0) + (area.montage ?? 0));
     const areaTotal = Math.max(1, rawTotal);
 
     const areaShares = ([
-  { b: "maschine" as Bereich, share: (area.maschine ?? 0) / areaTotal },
-  { b: "bank" as Bereich, share: (area.bank ?? 0) / areaTotal },
-  { b: "lack" as Bereich, share: (area.lack ?? 0) / areaTotal },
-  { b: "montage" as Bereich, share: (area.montage ?? 0) / areaTotal },
-] as Array<{ b: Bereich; share: number }>).filter((x) => x.share > 0);
-
-
-
-
-    
+      { b: "maschine" as Bereich, share: (area.maschine ?? 0) / areaTotal },
+      { b: "bank" as Bereich, share: (area.bank ?? 0) / areaTotal },
+      { b: "lack" as Bereich, share: (area.lack ?? 0) / areaTotal },
+      { b: "montage" as Bereich, share: (area.montage ?? 0) / areaTotal },
+    ] as Array<{ b: Bereich; share: number }>).filter((x) => x.share > 0);
 
     for (let localDay = 0; localDay < p.span; localDay++) {
       if (remainIn <= 0 && remainOver <= 0) break;
@@ -927,15 +905,13 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
       const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
       // Anzeige-Regel: Blau/Rot nur bei echten Buchungen.
-// Ohne Buchung -> keine Segmente (kein Phantom-Fortschritt).
-const dayCapMin = bookedThatDay;
+      // Ohne Buchung -> keine Segmente (kein Phantom-Fortschritt).
+      const dayCapMin = bookedThatDay;
 
-if (dayCapMin <= 0) continue;
+      if (dayCapMin <= 0) continue;
 
-const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
-const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
-
-;
+      const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
+      const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
 
       const used = takeIn > 0 ? takeIn : takeOver;
       if (used <= 0) continue;
@@ -949,11 +925,10 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
 
       if (segW > 0) {
         segs.push({
-  left: segLeft - partsStartPx,
-  width: segW,
-  kind: takeIn > 0 ? "in" : "over",
-});
-
+          left: segLeft - partsStartPx,
+          width: segW,
+          kind: takeIn > 0 ? "in" : "over",
+        });
       }
 
       if (takeIn > 0) remainIn -= takeIn;
@@ -965,16 +940,21 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
     return (
       <>
         {segs.map((s, idx) => {
-  if (s.kind === "in") {
-    return (
-      <div key={idx} className="absolute top-0 bottom-0 bg-blue-500" style={{ left: s.left, width: s.width }}>
-        <div className="absolute inset-0 bg-blue-900/15" />
-      </div>
-    );
-  }
-  return <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />;
-})}
-
+          if (s.kind === "in") {
+            return (
+              <div
+                key={idx}
+                className="absolute top-0 bottom-0 bg-blue-500/45"
+                style={{ left: s.left, width: s.width }}
+              >
+                <div className="absolute inset-0 bg-blue-900/10" />
+              </div>
+            );
+          }
+          return (
+            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
+          );
+        })}
       </>
     );
   }
@@ -1000,11 +980,8 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                   <div
                     key={idx}
                     className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
-  isCurrent
-    ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70"
-    : "bg-neutral-900 text-neutral-300"
-}`}
-
+                      isCurrent ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70" : "bg-neutral-900 text-neutral-300"
+                    }`}
                     style={{ width: 6 * CELL_W, height: 40 }}
                   >
                     <div>KW {kw}</div>
@@ -1026,27 +1003,26 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
               </div>
 
               {Array.from({ length: COLS }).map((_, i) => {
-  const label = DAY_LABELS[i % 6];
-  const isWeekBoundary = i % 6 === 0;
-  const isActive = activeCol === i;
+                const label = DAY_LABELS[i % 6];
+                const isWeekBoundary = i % 6 === 0;
+                const isActive = activeCol === i;
 
-  const d = dateForCol(weekRow, i);
-  const dateLabel = ddmm(d);
+                const d = dateForCol(weekRow, i);
+                const dateLabel = ddmm(d);
 
-  return (
-    <div
-      key={i}
-      className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
-        isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
-      } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
-      style={{ width: CELL_W }}
-    >
-      <div className="leading-4">{label}</div>
-      <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
-    </div>
-  );
-})}
-
+                return (
+                  <div
+                    key={i}
+                    className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
+                      isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
+                    } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
+                    style={{ width: CELL_W }}
+                  >
+                    <div className="leading-4">{label}</div>
+                    <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Mitarbeiterzeilen */}
@@ -1057,13 +1033,12 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
 
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
-                 <div
-  className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
-  style={{ width: NAME_COL_W, height: ROW_H }}
->
-  <div className="truncate font-medium">{m.name}</div>
-</div>
-
+                  <div
+                    className="shrink-0 border-r border-neutral-800 px-3 flex items-center text-sm text-neutral-200 bg-neutral-900/60"
+                    style={{ width: NAME_COL_W, height: ROW_H }}
+                  >
+                    <div className="truncate font-medium">{m.name}</div>
+                  </div>
 
                   <div className="relative" style={{ width: COLS * CELL_W, height: ROW_H }}>
                     {/* Raster + Drop-Zellen */}
@@ -1082,19 +1057,14 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
                           >
-                            <div
-                              className="absolute left-0 right-0 border-t border-neutral-800/70"
-                              style={{ top: PROJECT_BAND_H }}
-                            />
+                            <div className="absolute left-0 right-0 border-t border-neutral-800/70" style={{ top: PROJECT_BAND_H }} />
                             {Array.from({ length: BOOKING_LANES - 1 }).map((__, i) => (
                               <div
                                 key={i}
                                 className="absolute left-0 right-0 border-t border-neutral-800/40"
                                 style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
                               />
-                              
                             ))}
-                            
                           </div>
                         );
                       })}
@@ -1125,12 +1095,12 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                         </div>
                       );
                     })}
-{/* Status-Overlay (Urlaub / Ü-Abbau / Krank) */}
-{renderStatusOverlay(rowId, weekRow)}
+
+                    {/* Status-Overlay (Urlaub / Ü-Abbau / Krank) */}
+                    {renderStatusOverlay(rowId, weekRow)}
 
                     {/* Projektblöcke */}
                     {rowParts.map((p) => {
-                      const meisterBadge = meisterColorClass(p.meisterId);
                       const isDragging = draggingId === p.projectId;
                       const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
 
@@ -1149,13 +1119,12 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                           onDragStart={(e) => onDragStart(e, p.projectId)}
                           onDragEnd={onDragEnd}
                           className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
-  isDragging
-    ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
-    : isRunningProject
-    ? "border-blue-500 bg-neutral-900 text-neutral-100"
-    : "border-neutral-700 bg-neutral-900 text-neutral-100"
-}`}
-
+                            isDragging
+                              ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
+                              : isRunningProject
+                              ? "border-blue-500 bg-neutral-900 text-neutral-100"
+                              : "border-neutral-700 bg-neutral-900 text-neutral-100"
+                          }`}
                           style={{ top: blockTop, left: blockLeft, width: blockW, height: blockH }}
                           title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${
                             p.firstIso ?? "—"
@@ -1176,7 +1145,6 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                                   }`}
                                   style={{ width: CELL_W }}
                                 >
-                                  
                                   {isFriOrSat ? (
                                     <>
                                       <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-neutral-950" />
@@ -1193,44 +1161,43 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                                 </div>
                               );
                             })}
-                            
                           </div>
 
-                            {/* Step 2C: Plan-Segmente (blass in Meisterfarbe) + Label pro Segment */}
-<div className="absolute inset-0 pointer-events-none">
-  {buildPlanOutlineSegments(p, rowId).map((s, idx) => {
-    const softBg = meisterSoftBgClass(p.meisterId);
+                          {/* Step 2C: Plan-Segmente (blass in Meisterfarbe) + Label pro Segment */}
+                          <div className="absolute inset-0 pointer-events-none">
+                            {buildPlanOutlineSegments(p, rowId).map((s, idx) => {
+                              const softBg = meisterSoftBgClass(p.meisterId);
 
-    // Label nur anzeigen, wenn Segment breit genug ist (sonst wird es nur Lärm)
-    const showLabel = s.span * CELL_W >= 140;
+                              // Label nur anzeigen, wenn Segment breit genug ist (sonst wird es nur Lärm)
+                              const showLabel = s.span * CELL_W >= 140;
 
-    return (
-      <div
-        key={`${p.key}__planseg__${idx}`}
-        className={`absolute top-[1px] bottom-[1px] rounded-lg border border-orange-500/80 ${softBg}`}
-        style={{
-          left: s.start * CELL_W + 1,
-          width: s.span * CELL_W - 2,
-        }}
-      >
-        {showLabel ? (
-          <div className="absolute left-2 top-1.5 flex items-center gap-2 min-w-0">
-            <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
-            <div className="truncate text-[11px] font-semibold text-neutral-100">
-              {p.name}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    );
-  })}
-</div>
+                              return (
+                                <div
+                                  key={`${p.key}__planseg__${idx}`}
+                                  className={`absolute top-[1px] bottom-[1px] rounded-lg border border-orange-500/80 ${softBg}`}
+                                  style={{
+                                    left: s.start * CELL_W + 1,
+                                    width: s.span * CELL_W - 2,
+                                  }}
+                                >
+                                  {/* Kontrast-Layer über dem SoftBg, damit Text/Overlays lesbar bleiben */}
+                                  <div className="absolute inset-0 bg-neutral-950/35" />
 
+                                  {showLabel ? (
+                                    <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
+                                      <div className="ml-2 flex items-center gap-2 min-w-0 px-2 py-1 rounded bg-neutral-950/55 border border-neutral-200/10">
+                                        <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
+                                        <div className="truncate text-[11px] font-semibold text-neutral-50">{p.name}</div>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
 
                           {/* Fortschritt */}
                           <div className="absolute inset-0">{renderProjectProgressOverlay(p)}</div>
-
-                          
                         </div>
                       );
                     })}
@@ -1245,14 +1212,13 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
   }
 
   return (
-  <div className="flex flex-col gap-3 relative w-full">
-    {renderSection(0, topWeeks, scrollTopRef)}
-    {renderSection(1, bottomWeeks, scrollBottomRef)}
-    <div className="text-xs text-neutral-500 px-2">
-      Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert). Freitag+Samstag gelten als
-      Pause, wenn dort nicht gebucht wurde.
+    <div className="flex flex-col gap-3 relative w-full">
+      {renderSection(0, topWeeks, scrollTopRef)}
+      {renderSection(1, bottomWeeks, scrollBottomRef)}
+      <div className="text-xs text-neutral-500 px-2">
+        Projektblock-Länge ist dynamisch (Parallelität verkürzt, Überschreitung verlängert). Freitag+Samstag gelten als
+        Pause, wenn dort nicht gebucht wurde.
+      </div>
     </div>
-  </div>
-);
-
+  );
 }
