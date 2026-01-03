@@ -22,24 +22,20 @@ const COLS = 24; // 4 Wochen * 6 Tage
 const CELL_W = 80;
 const NAME_COL_W = 150;
 
-// ===== Step 3C: Horizontale Tagesgewichtung (nur Darstellung) =====
-// Mo–Do breiter | Fr/Sa schmal
+// ===== Darstellung: variable Tagesbreite (Mo–Do breiter | Fr/Sa schmal) =====
 function dayWidthFactor(col: number) {
   const dayIdx = col % 6; // 0=Mo ... 4=Fr 5=Sa
   if (dayIdx <= 3) return 1.25; // Mo–Do
   return 0.7; // Fr & Sa
 }
-
 function dayWidthPx(col: number) {
   return Math.round(CELL_W * dayWidthFactor(col));
 }
-
 function colLeftPx(col: number) {
   let x = 0;
   for (let i = 0; i < col; i++) x += dayWidthPx(i);
   return x;
 }
-
 function totalGridWidthPx() {
   let w = 0;
   for (let i = 0; i < COLS; i++) w += dayWidthPx(i);
@@ -49,25 +45,18 @@ function totalGridWidthPx() {
 // Band 1 (oben): Projektspur
 const PROJECT_BAND_H = 32;
 
-// Step 3B.1: Projekte parallel in der Projektspur (oben)
-// Wir teilen die Projektspur (32px) in 2 Lanes à 16px (capped, damit das Board stabil bleibt)
+// Projekte parallel in 2 Lanes in der Projektspur
 const MAX_PROJECT_LANES = 2;
-const PROJECT_LANE_H = PROJECT_BAND_H / MAX_PROJECT_LANES; // 16px
+const PROJECT_LANE_H = PROJECT_BAND_H / MAX_PROJECT_LANES;
 
-// Band 2 (unten): Buchungen (Auto-Pack)
-// Step 3A: Lanes werden pro Mitarbeiter-Zeile dynamisch erweitert
+// Buchungen-Lanes
 const MIN_BOOKING_LANES = 2;
-const MAX_BOOKING_LANES = 4; // Step 3A.2: visuell begrenzen
+const MAX_BOOKING_LANES = 4;
 const BOOKING_LANE_H = 24;
-
-// ROW_H ist pro Zeile dynamisch, aber capped (damit das Board nicht explodiert)
-function rowHeightPx(lanes: number) {
-  const capped = Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, lanes));
-  return PROJECT_BAND_H + capped * BOOKING_LANE_H;
-}
 
 // Basis-Kapazität pro Worker und Tag (10h = 600min)
 const BASE_CAP_MIN = 600;
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -79,7 +68,6 @@ function isoDate(d: Date) {
   const day = pad2(d.getUTCDate());
   return `${y}-${m}-${day}`;
 }
-
 function parseIso(iso: string): Date {
   const [y, m, d] = String(iso ?? "")
     .slice(0, 10)
@@ -87,13 +75,11 @@ function parseIso(iso: string): Date {
     .map((x) => Number(x));
   return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 0, 0, 0, 0));
 }
-
 function addDays(d: Date, days: number) {
   const x = new Date(d.getTime());
   x.setUTCDate(x.getUTCDate() + days);
   return x;
 }
-
 function startOfWeekMondayUTC(d: Date) {
   const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
   const day = x.getUTCDay(); // 0=So..6=Sa
@@ -109,7 +95,6 @@ function firstMondayOfYearUTC(year: number): Date {
   const offset = (dow === 0 ? 1 : 8 - dow) % 7;
   return new Date(Date.UTC(year, 0, 1 + offset, 0, 0, 0, 0));
 }
-
 function kalenderjahrKW(date: Date): number {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
   const year = d.getUTCFullYear();
@@ -118,8 +103,6 @@ function kalenderjahrKW(date: Date): number {
   if (diffDays < 0) return 1;
   return Math.floor(diffDays / 7) + 1;
 }
-
-// Anzeige-Ende einer KW: Mo–Sa, aber niemals über 31.12 hinaus
 function weekEndDisplayMoSaCapped(weekStartMonday: Date): Date {
   const year = weekStartMonday.getUTCFullYear();
   const end = addDays(weekStartMonday, 5);
@@ -130,12 +113,10 @@ function weekEndDisplayMoSaCapped(weekStartMonday: Date): Date {
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
 function safeNumber(v: unknown) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
-
 function minutesToHM(min: number) {
   const m = Math.max(0, Math.round(min || 0));
   const h = Math.floor(m / 60);
@@ -147,32 +128,22 @@ function ddmm(d: Date) {
   const mon = pad2(d.getUTCMonth() + 1);
   return `${day}.${mon}`;
 }
-
 function isBereich(x: unknown): x is Bereich {
   return x === "maschine" || x === "bank" || x === "lack" || x === "montage";
 }
 
-function diffDaysIso(fromIso: string, toIso: string) {
-  const a = parseIso(fromIso).getTime();
-  const b = parseIso(toIso).getTime();
-  return Math.round((b - a) / 86400000);
-}
-
 // ===== Robuste Feldzugriffe =====
-// Regel: Der Buchungstag ist immer YYYY-MM-DD am Anfang (keine Zeitzonen-Umrechnung)
 function pickIso(e: any): string {
   const cands = [e?.datum, e?.date, e?.iso, e?.day];
   for (const c of cands) {
     if (typeof c !== "string") continue;
     const s = c.trim();
     if (!s) continue;
-
     const head = s.slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}$/.test(head)) return head;
   }
   return "";
 }
-
 function pickProjektId(e: any): string {
   const cands = [e?.projektId, e?.projectId, e?.projektID, e?.projectID, e?.pid];
   for (const c of cands) {
@@ -182,7 +153,6 @@ function pickProjektId(e: any): string {
   }
   return "";
 }
-
 function pickMitarbeiterId(e: any): string {
   const cands = [e?.mitarbeiterId, e?.employeeId, e?.mitarbeiterID, e?.mid];
   for (const c of cands) {
@@ -192,7 +162,6 @@ function pickMitarbeiterId(e: any): string {
   }
   return "";
 }
-
 function pickMinutes(e: any): number {
   const min = safeNumber(e?.minuten) || safeNumber(e?.minutes);
   if (min > 0) return Math.max(0, Math.round(min));
@@ -210,21 +179,12 @@ function pickPlannerMeisterId(p: any): string | null {
   return null;
 }
 
-function pickOperativDefaultId(p: any): string | null {
-  const cands = [p?.zugeordnetAnId, p?.assignedToId];
-  for (const c of cands) {
-    if (typeof c === "string" && c.trim()) return c;
-  }
-  return null;
-}
-
 // ===== stabile Meisterfarbe =====
 function hashStr(s: string) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h;
 }
-
 function meisterColorClass(meisterId: string | null) {
   if (!meisterId) return "bg-orange-500";
   const palette = [
@@ -254,21 +214,6 @@ function meisterSoftBgClass(meisterId: string | null) {
   ];
   const idx = hashStr(meisterId) % palette.length;
   return palette[idx];
-}
-
-function bereichColorClass(b: Bereich) {
-  switch (b) {
-    case "maschine":
-      return "bg-cyan-500";
-    case "bank":
-      return "bg-blue-500";
-    case "lack":
-      return "bg-fuchsia-500";
-    case "montage":
-      return "bg-emerald-500";
-    default:
-      return "bg-blue-500";
-  }
 }
 
 // ===== Projekt-Totals inkl. dayMin + dayWorkers =====
@@ -355,14 +300,14 @@ function extractEmployeeDayProjectMinutes(state: any): Map<string, Array<{ proje
 }
 
 // ===== Planung (Layout) =====
-type LayoutPos = { rowId: string; startCol: number; lane?: number }; // Step 3B.2
+type LayoutPos = { rowId: string; startCol: number; lane?: number };
 type LayoutMap = Record<string, LayoutPos>;
 
 type Block = {
   id: string;
   name: string;
   rowId: string;
-  lane: number; // Step 3B.2: 0/1
+  lane: number;
   startColTop: number;
   spanCols: number;
   meisterId: string | null;
@@ -376,7 +321,7 @@ type BlockPart = {
   projectId: string;
   name: string;
   rowId: string;
-  lane: number; // Step 3B.2
+  lane: number;
   weekRow: 0 | 1;
   startCol: number;
   span: number;
@@ -399,14 +344,20 @@ type PackedSeg = {
 };
 type PackResult = {
   segs: PackedSeg[];
-  lanes: number; // maximale genutzte Lane-Anzahl (Minimum = MIN_BOOKING_LANES)
+  lanes: number;
 };
 
 function pickColorForProject(_projectId: string, meisterId: string | null) {
   return meisterColorClass(meisterId);
 }
 
-export default function Board({ state, setState, ms }: Props) {
+export default function Board({
+  state,
+  setState,
+  ms,
+  activeBookingProjektId: _activeBookingProjektId,
+  setActiveBookingProjektId: _setActiveBookingProjektId,
+}: Props) {
   const mitarbeiter = (ms as any)?.mitarbeiter ?? [];
   const projects = (state as any)?.projects ?? [];
   const running = (state as any)?.running ?? null;
@@ -422,6 +373,7 @@ export default function Board({ state, setState, ms }: Props) {
 
   const scrollTopRef = useRef<HTMLDivElement | null>(null);
   const scrollBottomRef = useRef<HTMLDivElement | null>(null);
+
   const bookingLanePrefsRef = useRef<Map<string, Map<string, number>>>(new Map());
 
   function dateForCol(weekRow: 0 | 1, col: number) {
@@ -445,28 +397,15 @@ export default function Board({ state, setState, ms }: Props) {
   }
 
   const activeProjects = useMemo(
-  () => (projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv"),
-  [projects]
-);
+    () => (projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv"),
+    [projects]
+  );
 
-// ✅ EIN layout (Single Source of Truth für Board / Pool)
-// MUSS vor poolProjects / boardProjects stehen
-const layout: LayoutMap = ((state as any)?.boardLayout ?? {}) as LayoutMap;
+  const layout: LayoutMap = ((state as any)?.boardLayout ?? {}) as LayoutMap;
 
-// ✅ Pool = aktive Projekte OHNE Layout
-const poolProjects = useMemo(
-  () => activeProjects.filter((p: any) => !layout[String(p.id)]),
-  [activeProjects, layout]
-);
+  const poolProjects = useMemo(() => activeProjects.filter((p: any) => !layout[String(p.id)]), [activeProjects, layout]);
 
-// ✅ Board = aktive Projekte MIT Layout
-const boardProjects = useMemo(
-  () => activeProjects.filter((p: any) => !!layout[String(p.id)]),
-  [activeProjects, layout]
-);
-
-
-
+  const boardProjects = useMemo(() => activeProjects.filter((p: any) => !!layout[String(p.id)]), [activeProjects, layout]);
 
   const projectById = useMemo(() => {
     const m = new Map<string, any>();
@@ -477,27 +416,13 @@ const boardProjects = useMemo(
   const projTotals = useMemo(() => extractProjectTotals(state as any), [state]);
   const empDayProjIdx = useMemo(() => extractEmployeeDayProjectMinutes(state as any), [state]);
 
-  // ✅ Pool-Logik: Projekte ohne Layout werden NICHT automatisch ins Board gelegt.
-// Sie stehen ausschließlich im Projekt-Pool (rechts).
-const autoFallback: LayoutMap = {};
-
-
-  /**
-   * Dynamische Dauer in Cols (Mo–Sa Raster):
-   * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
-   * - Tageskapazität basiert auf Parallelität:
-   *     dayCap = BASE_CAP_MIN * workerCountThatDay
-   *   workerCountThatDay = Anzahl Mitarbeiter, die an diesem Projekt an diesem Tag gebucht haben
-   * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte zählt, verbraucht aber keine Minuten)
-   */
   function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
     if (minutesTarget <= 0) return 1;
 
     let remain = minutesTarget;
     let cols = 0;
 
-    const MAX_COLS = COLS * 2; // visuell wird eh bei 2 Reihen abgeschnitten
-
+    const MAX_COLS = COLS * 2;
     const start = parseIso(startIso);
 
     for (let i = 0; i < MAX_COLS; i++) {
@@ -506,21 +431,15 @@ const autoFallback: LayoutMap = {};
 
       const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-      const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+      const dow = parseIso(dayIso).getUTCDay();
       const isFriOrSat = dow === 5 || dow === 6;
 
-      // Freitag + Samstag:
-      // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
-      // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
       if (isFriOrSat && bookedThatDay <= 0) {
         cols++;
         continue;
       }
 
-      // Parallelität: wie viele Mitarbeiter haben an diesem Tag am Projekt gebucht?
       const workerCount = Math.max(1, projTotals.dayWorkers.get(key)?.size ?? 1);
-
-      // Tageskapazität ist SOLL (10h pro Worker), NICHT "bookedThatDay"
       const dayCap = BASE_CAP_MIN * workerCount;
 
       const take = Math.min(remain, dayCap);
@@ -533,60 +452,54 @@ const autoFallback: LayoutMap = {};
     return Math.max(1, cols);
   }
 
- // Blocks: NUR Projekte, die wirklich im Layout stehen (sonst Pool)
-const rawBlocks: Block[] = useMemo(() => {
-  if (mitarbeiter.length === 0) return [];
+  // Blocks: NUR Projekte, die wirklich im Layout stehen
+  const rawBlocks: Block[] = useMemo(() => {
+    if (mitarbeiter.length === 0) return [];
 
-  return boardProjects.map((p: any) => {
-    const pid = String(p.id);
-    const meisterId = pickPlannerMeisterId(p);
+    return boardProjects
+      .map((p: any) => {
+        const pid = String(p.id);
+        const meisterId = pickPlannerMeisterId(p);
 
-    const pos = layout[pid];
-    if (!pos) return null;
+        const pos = layout[pid];
+        if (!pos) return null;
 
-    const plannedStartColTop = clamp(pos.startCol ?? 0, 0, COLS - 1);
-    const rowId = String(pos.rowId);
-    const lane = clamp(Number(pos.lane ?? 0), 0, 1);
+        const plannedStartColTop = clamp(pos.startCol ?? 0, 0, COLS - 1);
+        const rowId = String(pos.rowId);
+        const lane = clamp(Number(pos.lane ?? 0), 0, 1);
 
-    const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
-    const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
-    const minutesTarget = Math.max(planMinuten, bookedMinuten);
+        const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
+        const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
+        const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
-    const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
+        const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
 
-    const firstIso = projTotals.firstIso.get(pid) ?? null;
-    const firstColTop = firstIso ? colForIso(0, firstIso) : null;
-    const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
+        const firstIso = projTotals.firstIso.get(pid) ?? null;
+        const firstColTop = firstIso ? colForIso(0, firstIso) : null;
+        const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
 
-    const startIso = firstIso ?? plannedStartIso;
-    const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
+        const startIso = firstIso ?? plannedStartIso;
+        const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
-    return {
-      id: pid,
-      name: String(p.name ?? "Projekt"),
-      rowId,
-      lane,
-      startColTop,
-      spanCols,
-      meisterId,
-      planMinuten,
-      startIso,
-      firstIso,
-    };
-  }).filter(Boolean) as Block[];
-}, [boardProjects, layout, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+        return {
+          id: pid,
+          name: String(p.name ?? "Projekt"),
+          rowId,
+          lane,
+          startColTop,
+          spanCols,
+          meisterId,
+          planMinuten,
+          startIso,
+          firstIso,
+        };
+      })
+      .filter(Boolean) as Block[];
+  }, [boardProjects, layout, mitarbeiter.length, projTotals, topWeeks, bottomWeeks]);
 
-
-
-  /**
-   * Step 3B.2: Ketten-Layout NUR innerhalb einer Lane
-   * - Pro Mitarbeiter 2 Lanes (0/1)
-   * - Projekte in unterschiedlichen Lanes dürfen zeitlich überlappen
-   * - Innerhalb einer Lane bleiben sie hintereinander (kein Overlap in derselben Lane)
-   */
+  // Ketten-Layout pro Lane (keine Overlaps innerhalb einer Lane)
   const blocks: Block[] = useMemo(() => {
     const byRowLane = new Map<string, Block[]>();
-
     for (const b of rawBlocks) {
       const k = `${b.rowId}__${clamp(Number(b.lane ?? 0), 0, 1)}`;
       if (!byRowLane.has(k)) byRowLane.set(k, []);
@@ -598,30 +511,24 @@ const rawBlocks: Block[] = useMemo(() => {
     const visibleSpanColsFor = (blk: Block) => {
       let lastVisible = -1;
       const start = parseIso(String(blk.startIso));
-
       for (let off = 0; off < blk.spanCols; off++) {
         const dayIso = isoDate(addDays(start, off));
         const dow = parseIso(dayIso).getUTCDay();
         const isFriOrSat = dow === 5 || dow === 6;
-
         const key = `${blk.id}__${dayIso}`;
         const booked = projTotals.dayMin.get(key) ?? 0;
-
         const visible = !(isFriOrSat && booked <= 0);
         if (visible) lastVisible = off;
       }
-
       return Math.max(1, lastVisible + 1);
     };
 
     for (const [, arr] of byRowLane.entries()) {
       const sorted = arr.slice().sort((a, b) => a.startColTop - b.startColTop);
-
       let cursor = 0;
 
       for (let i = 0; i < sorted.length; i++) {
         const b = sorted[i];
-
         if (i === 0) {
           const vis = visibleSpanColsFor(b);
           cursor = clamp(b.startColTop, 0, COLS - 1) + vis;
@@ -631,12 +538,10 @@ const rawBlocks: Block[] = useMemo(() => {
 
         const desiredStart = clamp(b.startColTop, 0, COLS - 1);
         const newStart = clamp(Math.max(desiredStart, cursor), 0, COLS - 1);
-
         b.startColTop = newStart;
 
         const vis = visibleSpanColsFor(b);
         cursor = newStart + vis;
-
         out.push(b);
       }
     }
@@ -691,18 +596,15 @@ const rawBlocks: Block[] = useMemo(() => {
 
   const blockParts: BlockPart[] = useMemo(() => blocks.flatMap(splitBlock), [blocks]);
 
-  const projectTotalSpanCols = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of blockParts) {
-      const end = p.relStart + p.span;
-      const cur = m.get(String(p.projectId)) ?? 0;
-      if (end > cur) m.set(String(p.projectId), end);
-    }
-    return m;
-  }, [blockParts]);
-
-  // Drag & Drop: speichert weiterhin "Planung". Kettenlayout wird darüber gelegt.
+  // ===== Drag & Drop UX =====
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [hoverRowId, setHoverRowId] = useState<string | null>(null);
+  const [hoverPool, setHoverPool] = useState(false);
+
+  function clearDnDHovers() {
+    setHoverRowId(null);
+    setHoverPool(false);
+  }
 
   function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
     setState((s) => {
@@ -710,7 +612,7 @@ const rawBlocks: Block[] = useMemo(() => {
       if (!next.boardLayout) next.boardLayout = {};
       next.boardLayout[String(projectId)] = nextPos;
 
-      // ✅ WICHTIG: Drop-Zuordnung auch ins Projekt schreiben (damit es nachvollziehbar bleibt)
+      // Zuordnung ins Projekt schreiben (Nachvollziehbarkeit / Statistik)
       const pid = String(projectId);
       const rowId = String(nextPos.rowId);
 
@@ -718,33 +620,30 @@ const rawBlocks: Block[] = useMemo(() => {
         const idx = next.projects.findIndex((p: any) => String(p?.id) === pid);
         if (idx >= 0) {
           const proj = next.projects[idx];
-          next.projects[idx] = {
-            ...proj,
-            // operativ zugeordnet (Board-Zeile)
-            zugeordnetAnId: rowId,
-          };
+          next.projects[idx] = { ...proj, zugeordnetAnId: rowId };
         }
       }
 
       return next;
     });
   }
-function removeFromLayout(projectId: string) {
-  setState((s) => {
-    const next = structuredClone(s) as any;
-    if (!next.boardLayout) return next;
 
-    delete next.boardLayout[String(projectId)];
-    return next;
-  });
-}
+  function removeFromLayout(projectId: string) {
+    setState((s) => {
+      const next = structuredClone(s) as any;
+      if (!next.boardLayout) return next;
+      delete next.boardLayout[String(projectId)];
+      return next;
+    });
+  }
 
   function onDragStart(e: React.DragEvent, projectId: string) {
     setDraggingId(projectId);
+    clearDnDHovers();
+
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", String(projectId));
 
-    // Step 3B.3: aktuelle Lane mitschicken (aus Layout, fallback 0)
     const pos = (layout as any)?.[String(projectId)];
     const lane = clamp(Number(pos?.lane ?? 0), 0, 1);
     e.dataTransfer.setData("application/x-orgaboard-lane", String(lane));
@@ -752,27 +651,26 @@ function removeFromLayout(projectId: string) {
 
   function onDragEnd() {
     setDraggingId(null);
+    clearDnDHovers();
   }
 
   function onDropOnRow(e: React.DragEvent, target: { rowId: string; weekRow: 0 | 1; col: number }) {
     e.preventDefault();
+
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
+
+    // Nur oben einplanen
     if (target.weekRow !== 0) return;
 
     const rowId = String(target.rowId);
     const col = clamp(target.col, 0, COLS - 1);
 
-    // Step 3B.3: Lane vom Drag mitnehmen
     const draggedLaneRaw = e.dataTransfer.getData("application/x-orgaboard-lane");
     let lane = clamp(Number(draggedLaneRaw || 0), 0, 1);
 
-    // Optional: Shift toggelt Lane
-    if ((e as any).shiftKey) {
-      lane = lane === 0 ? 1 : 0;
-    }
+    if ((e as any).shiftKey) lane = lane === 0 ? 1 : 0;
 
-    // Wenn gewünschte Lane kollidiert, darf er in die andere Lane ausweichen (aber nur wenn nötig)
     const laneOccupied = (testLane: number) =>
       blockParts.some(
         (p) =>
@@ -783,12 +681,12 @@ function removeFromLayout(projectId: string) {
           col < p.startCol + p.span
       );
 
-    if (laneOccupied(lane) && !laneOccupied(lane === 0 ? 1 : 0)) {
-      lane = lane === 0 ? 1 : 0;
-    }
+    if (laneOccupied(lane) && !laneOccupied(lane === 0 ? 1 : 0)) lane = lane === 0 ? 1 : 0;
 
     saveLayout(projectId, { rowId, startCol: col, lane });
+
     setDraggingId(null);
+    clearDnDHovers();
   }
 
   // Fokus auf laufendes Projekt
@@ -796,14 +694,13 @@ function removeFromLayout(projectId: string) {
     const pid = running?.projektId ? String(running.projektId) : null;
     if (!pid) return;
 
-    const topPart = blockParts.find((p) => p.projectId === pid && p.weekRow === 0 && p.relStart === 0);
-    const part = topPart ?? blockParts.find((p) => p.projectId === pid);
+    const part = blockParts.find((p) => p.projectId === pid && p.weekRow === 0) ?? blockParts.find((p) => p.projectId === pid);
     if (!part) return;
 
     const sc = part.weekRow === 0 ? scrollTopRef.current : scrollBottomRef.current;
     if (!sc) return;
 
-    const x = NAME_COL_W + part.startCol * CELL_W - sc.clientWidth * 0.35;
+    const x = NAME_COL_W + colLeftPx(part.startCol) - sc.clientWidth * 0.35;
     sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
   }, [running?.projektId, blockParts]);
 
@@ -812,7 +709,6 @@ function removeFromLayout(projectId: string) {
     const segs: PackedSeg[] = [];
     let maxLaneUsed = 0;
 
-    // Stabilität: gleiche Projekte sollen möglichst auf derselben Lane bleiben
     const stableKey = `${rowId}__${weekRow}`;
     const prefStore = bookingLanePrefsRef.current;
     if (!prefStore.has(stableKey)) prefStore.set(stableKey, new Map<string, number>());
@@ -829,10 +725,8 @@ function removeFromLayout(projectId: string) {
       const soll = sollMinutenFor(m, iso);
       const denom = Math.max(1, soll > 0 ? soll : BASE_CAP_MIN);
 
-      // Step 3A: dynamische Lanes (Minimum bleibt MIN_BOOKING_LANES)
       const usedPxByLane: number[] = Array.from({ length: MIN_BOOKING_LANES }, () => 0);
 
-      // Größte zuerst, dann packen
       const sorted = entries.slice().sort((a, b) => b.minuten - a.minuten);
 
       for (const e of sorted) {
@@ -845,16 +739,13 @@ function removeFromLayout(projectId: string) {
         const widthPxRaw = (Math.max(0, e.minuten) / denom) * dayW;
         const widthPx = clamp(Math.round(widthPxRaw), 10, dayW - 4);
 
-        // Wunsch-Lane aus Pref, sonst 0 (aber capped)
         let lane = lanePref.has(projId) ? (lanePref.get(projId) as number) : 0;
         lane = clamp(lane, 0, MAX_BOOKING_LANES - 1);
 
-        // Prüfen ob passt, sonst nach unten suchen.
-        // Wir erweitern Lanes nur bis MAX_BOOKING_LANES, danach "quetschen" wir in die letzte Lane.
         while (true) {
           if (lane >= usedPxByLane.length) {
             if (usedPxByLane.length < MAX_BOOKING_LANES) usedPxByLane.push(0);
-            else break; // keine neuen Lanes mehr möglich
+            else break;
           }
 
           const safeLane = Math.min(lane, usedPxByLane.length - 1);
@@ -865,7 +756,6 @@ function removeFromLayout(projectId: string) {
             break;
           }
 
-          // nächste Lane versuchen, aber nie über MAX hinaus
           if (lane >= MAX_BOOKING_LANES - 1) {
             lane = MAX_BOOKING_LANES - 1;
             break;
@@ -895,7 +785,6 @@ function removeFromLayout(projectId: string) {
           colorClass,
         });
 
-        // Pref aktualisieren
         lanePref.set(projId, lane);
 
         if (lane + 1 > maxLaneUsed) maxLaneUsed = lane + 1;
@@ -905,9 +794,7 @@ function removeFromLayout(projectId: string) {
     return { segs, lanes: Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, maxLaneUsed)) };
   }
 
-  // ===== Step 2: Plan-Linie mit Lücken =====
-  // Regel: Wenn dieses Projekt an einem Tag KEINE Buchung hat, aber der Mitarbeiter an dem Tag
-  // an einem ANDEREN Projekt gebucht ist, dann wird die Plan-Outline an diesem Tag unterbrochen.
+  // ===== Plan-Linie mit Lücken =====
   function hasOtherProjectBooking(rowId: string, iso: string, projectId: string): boolean {
     const entries = empDayProjIdx.get(`${rowId}__${iso}`) ?? [];
     return entries.some((e) => String(e.projektId) !== String(projectId) && (e.minuten ?? 0) > 0);
@@ -923,7 +810,6 @@ function removeFromLayout(projectId: string) {
       const iso = isoDate(dateForCol(p.weekRow, p.startCol + i));
       const bookedThisProject = (projTotals.dayMin.get(`${p.projectId}__${iso}`) ?? 0) > 0;
 
-      // Lücke nur dann, wenn anderes Projekt läuft UND dieses Projekt nicht gebucht ist
       const gap = !bookedThisProject && hasOtherProjectBooking(rowId, iso, p.projectId);
       const visible = !gap;
 
@@ -943,10 +829,9 @@ function removeFromLayout(projectId: string) {
     return segs;
   }
 
-  // ===== Status-Overlay (Urlaub / Ü-Abbau / Krank) =====
-  function renderStatusOverlay(rowId: string, weekRow: 0 | 1, lanes: number, laneH: number) {
+  // ===== Status-Overlay =====
+  function renderStatusOverlay(rowId: string, weekRow: 0 | 1, lanes: number) {
     const out: React.ReactNode[] = [];
-
     for (let col = 0; col < COLS; col++) {
       const iso = isoDate(dateForCol(weekRow, col));
       const status = getStatus((state as any)?.buchungen ?? [], iso, rowId);
@@ -974,7 +859,7 @@ function removeFromLayout(projectId: string) {
           className="absolute z-[5] rounded-md text-[10px] font-semibold text-neutral-950 px-1.5 py-0.5 shadow"
           style={{
             left: colLeftPx(col) + 6,
-            top: PROJECT_BAND_H + Math.max(MIN_BOOKING_LANES, lanes) * laneH - 18,
+            top: PROJECT_BAND_H + Math.max(MIN_BOOKING_LANES, lanes) * BOOKING_LANE_H - 18,
           }}
           title={`${label} · ${iso}`}
         >
@@ -982,11 +867,10 @@ function removeFromLayout(projectId: string) {
         </div>
       );
     }
-
     return out;
   }
 
-  // ===== Projekt-Fortschritt-Overlay (parallel = mehr Tageskapazität => echte Kalender-Kompression) =====
+  // ===== Projekt-Fortschritt-Overlay =====
   function renderProjectProgressOverlay(p: BlockPart) {
     const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
     const planMin = Math.max(0, p.planMinuten);
@@ -994,7 +878,6 @@ function removeFromLayout(projectId: string) {
 
     if (totalMin <= 0 || !first) return null;
 
-    // Blau = innerhalb Kalk, Rot = über Kalk
     let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
     let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : totalMin;
 
@@ -1003,21 +886,17 @@ function removeFromLayout(projectId: string) {
     for (let localDay = 0; localDay < p.span; localDay++) {
       if (remainIn <= 0 && remainOver <= 0) break;
 
-      // Spaltenindex im sichtbaren Grid (für variable Breiten)
       const col = p.startCol + localDay;
       const dayW = dayWidthPx(col);
 
-      // Linker Offset innerhalb dieses Segment-Blocks (Summe der vorherigen Tage)
       let dayOffset = 0;
       for (let i = 0; i < localDay; i++) dayOffset += dayWidthPx(p.startCol + i);
 
-      // Globaler Tag seit Projektstart (firstIso) = relStart + localDay
       const globalDay = p.relStart + localDay;
       const dayIso = isoDate(addDays(parseIso(first), globalDay));
       const key = `${p.projectId}__${dayIso}`;
       const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-      // Anzeige-Regel bleibt: Fortschritt nur bei echter Buchung
       const dayCapMin = bookedThatDay;
       if (dayCapMin <= 0) continue;
 
@@ -1027,16 +906,9 @@ function removeFromLayout(projectId: string) {
       const used = takeIn > 0 ? takeIn : takeOver;
       if (used <= 0) continue;
 
-      // Breite relativ zur Tagesbreite (variable Spalten)
       const wPx = clamp(Math.round((used / dayCapMin) * dayW), 2, dayW);
 
-      if (wPx > 0) {
-        segs.push({
-          left: dayOffset,
-          width: wPx,
-          kind: takeIn > 0 ? "in" : "over",
-        });
-      }
+      segs.push({ left: dayOffset, width: wPx, kind: takeIn > 0 ? "in" : "over" });
 
       if (takeIn > 0) remainIn -= takeIn;
       else remainOver -= takeOver;
@@ -1046,98 +918,25 @@ function removeFromLayout(projectId: string) {
 
     return (
       <>
-        {segs.map((s, idx) => {
-          if (s.kind === "in") {
-            return (
-              <div key={idx} className="absolute top-0 bottom-0 bg-blue-500/45" style={{ left: s.left, width: s.width }}>
-                <div className="absolute inset-0 bg-blue-900/10" />
-              </div>
-            );
-          }
-          return <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />;
-        })}
+        {segs.map((s, idx) =>
+          s.kind === "in" ? (
+            <div key={idx} className="absolute top-0 bottom-0 bg-blue-500/45" style={{ left: s.left, width: s.width }}>
+              <div className="absolute inset-0 bg-blue-900/10" />
+            </div>
+          ) : (
+            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
+          )
+        )}
       </>
     );
-  }
-
-  function computeProjectLaneMap(parts: BlockPart[]) {
-    // Greedy Lane-Packing nach Zeit-Überlappung, capped auf MAX_PROJECT_LANES
-    // Lane-Entscheidung pro Projekt (projectId), nicht pro Segment
-    const uniq: Array<{ projectId: string; start: number; end: number }> = [];
-    const seen = new Set<string>();
-
-    for (const p of parts) {
-      const pid = String(p.projectId);
-      if (seen.has(pid)) continue;
-      seen.add(pid);
-      uniq.push({ projectId: pid, start: p.startCol, end: p.startCol + p.span });
-    }
-
-    uniq.sort((a, b) => a.start - b.start);
-
-    const laneEnd: number[] = Array.from({ length: MAX_PROJECT_LANES }, () => -1);
-    const map = new Map<string, number>();
-
-    for (const it of uniq) {
-      let placed = false;
-
-      for (let lane = 0; lane < MAX_PROJECT_LANES; lane++) {
-        if (it.start >= laneEnd[lane]) {
-          map.set(it.projectId, lane);
-          laneEnd[lane] = it.end;
-          placed = true;
-          break;
-        }
-      }
-
-      // Wenn alle voll: in letzte Lane "quetschen" (capped Verhalten)
-      if (!placed) {
-        map.set(it.projectId, MAX_PROJECT_LANES - 1);
-        laneEnd[MAX_PROJECT_LANES - 1] = Math.max(laneEnd[MAX_PROJECT_LANES - 1], it.end);
-      }
-    }
-
-    return map;
   }
 
   function renderSection(weekRow: 0 | 1, weeks4: Date[], scrollRef: React.RefObject<HTMLDivElement>) {
     const parts = blockParts.filter((p) => p.weekRow === weekRow);
     const activeCol = running?.datum ? colForIso(weekRow, String(running.datum).slice(0, 10)) : null;
 
-    // --- Auto-Skalierung (nur Darstellung) ---
-    const [sectionH, setSectionH] = useState<number>(0);
-
-    useEffect(() => {
-      const el = scrollRef.current;
-      if (!el) return;
-
-      const update = () => setSectionH(el.clientHeight || 0);
-      update();
-
-      const ro = new ResizeObserver(() => update());
-      ro.observe(el);
-      return () => ro.disconnect();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scrollRef]);
-
-    const EMP_COUNT = Math.max(1, Array.isArray(mitarbeiter) ? mitarbeiter.length : 1);
-
-    // Headerhöhen
     const KW_H = 40;
     const DAY_H = 44;
-    const HEADER_H = KW_H + DAY_H;
-
-    const availableGridH = Math.max(120, (sectionH || 0) - HEADER_H);
-    const perRowTargetH = Math.max(44, Math.floor(availableGridH / EMP_COUNT));
-
-    // Lane-Höhe
-    const laneH = clamp(Math.floor((perRowTargetH - PROJECT_BAND_H) / MAX_BOOKING_LANES), 10, 24);
-
-    // Zeilenhöhe abhängig von tatsächlich genutzten Lanes (capped)
-    const rowHeightFor = (lanes: number) => {
-      const capped = Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, lanes));
-      return PROJECT_BAND_H + capped * laneH;
-    };
 
     return (
       <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden h-full">
@@ -1152,20 +951,17 @@ function removeFromLayout(projectId: string) {
                 const from = isoDate(wStart);
                 const to = isoDate(weekEndDisplayMoSaCapped(wStart));
 
+                const weekW = Array.from({ length: 6 })
+                  .map((_, i) => dayWidthPx(idx * 6 + i))
+                  .reduce((a, b) => a + b, 0);
+
                 return (
                   <div
                     key={idx}
                     className={`flex flex-col items-center justify-center text-xs font-semibold border-r border-neutral-800 ${
-                      isCurrent
-                        ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70"
-                        : "bg-neutral-900 text-neutral-300"
+                      isCurrent ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70" : "bg-neutral-900 text-neutral-300"
                     }`}
-                    style={{
-                      width: Array.from({ length: 6 })
-                        .map((_, i) => dayWidthPx(idx * 6 + i))
-                        .reduce((a, b) => a + b, 0),
-                      height: KW_H,
-                    }}
+                    style={{ width: weekW, height: KW_H }}
                   >
                     <div>KW {kw}</div>
                     <div className={`${isCurrent ? "text-neutral-900" : "text-neutral-500"} text-[10px] font-medium`}>
@@ -1215,7 +1011,8 @@ function removeFromLayout(projectId: string) {
               const pack = packDaySegments(rowId, weekRow);
               const lanes = pack.lanes;
 
-              const rowH = rowHeightFor(lanes);
+              const capped = Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, lanes));
+              const rowH = PROJECT_BAND_H + capped * BOOKING_LANE_H;
 
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
@@ -1226,7 +1023,10 @@ function removeFromLayout(projectId: string) {
                     <div className="truncate font-medium">{m.name}</div>
                   </div>
 
-                  <div className="relative" style={{ width: totalGridWidthPx(), height: rowH }}>
+                  <div
+                    className={`relative ${draggingId && hoverRowId === String(rowId) ? "ring-2 ring-orange-500/70" : ""}`}
+                    style={{ width: totalGridWidthPx(), height: rowH }}
+                  >
                     {/* Raster */}
                     <div className="absolute inset-0">
                       {Array.from({ length: COLS }).map((_, col) => (
@@ -1234,18 +1034,19 @@ function removeFromLayout(projectId: string) {
                           key={col}
                           className="absolute top-0 bottom-0 border-r border-neutral-800 bg-neutral-950"
                           style={{ left: colLeftPx(col), width: dayWidthPx(col) }}
-                          onDragOver={(e) => e.preventDefault()}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            setHoverRowId(String(rowId));
+                            setHoverPool(false);
+                          }}
                           onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
                         >
-                          <div
-                            className="absolute left-0 right-0 border-t border-neutral-800/70"
-                            style={{ top: PROJECT_BAND_H }}
-                          />
-                          {Array.from({ length: Math.max(0, lanes - 1) }).map((__, i) => (
+                          <div className="absolute left-0 right-0 border-t border-neutral-800/70" style={{ top: PROJECT_BAND_H }} />
+                          {Array.from({ length: Math.max(0, capped - 1) }).map((__, i) => (
                             <div
                               key={i}
                               className="absolute left-0 right-0 border-t border-neutral-800/40"
-                              style={{ top: PROJECT_BAND_H + (i + 1) * laneH }}
+                              style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
                             />
                           ))}
                         </div>
@@ -1254,7 +1055,7 @@ function removeFromLayout(projectId: string) {
 
                     {/* Buchungen */}
                     {pack.segs.map((seg) => {
-                      const topPx = PROJECT_BAND_H + seg.lane * laneH + 4;
+                      const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
                       const leftPx = colLeftPx(seg.col) + seg.leftPx;
 
                       return (
@@ -1265,7 +1066,7 @@ function removeFromLayout(projectId: string) {
                             top: topPx,
                             left: leftPx,
                             width: seg.widthPx,
-                            height: Math.max(8, laneH - 8),
+                            height: BOOKING_LANE_H - 8,
                           }}
                           title={seg.tooltip}
                         >
@@ -1278,9 +1079,9 @@ function removeFromLayout(projectId: string) {
                       );
                     })}
 
-                    {renderStatusOverlay(rowId, weekRow, lanes, laneH)}
+                    {renderStatusOverlay(rowId, weekRow, lanes)}
 
-                    {/* Projektblöcke (mit Beschriftung) */}
+                    {/* Projektblöcke */}
                     {rowParts.map((p) => {
                       const isDragging = draggingId === p.projectId;
                       const isRunningProject = String(running?.projektId ?? "") === String(p.projectId);
@@ -1288,9 +1089,7 @@ function removeFromLayout(projectId: string) {
                       const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
                       const planMin = Math.max(0, p.planMinuten);
 
-                      const title = `${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(
-                        planMin
-                      )}\nStart: ${p.firstIso ?? "—"}`;
+                      const title = `${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${p.firstIso ?? "—"}`;
 
                       const segs = buildPlanOutlineSegments(p, rowId);
                       if (segs.length === 0) return null;
@@ -1300,16 +1099,13 @@ function removeFromLayout(projectId: string) {
                           {segs.map((s, idx) => {
                             const softBg = meisterSoftBgClass(p.meisterId);
 
-                            // Step 3C: variable Tagesbreiten (nur Darstellung)
                             const absCol = p.startCol + s.start;
                             const segLeft = colLeftPx(absCol) + 2;
 
-                            // Lane/Top/Height (Step 3B bleibt)
                             const lane = clamp(Number(p.lane ?? 0), 0, 1);
                             const segTop = 2 + lane * PROJECT_LANE_H;
                             const segH = PROJECT_LANE_H - 4;
 
-                            // Breite = Summe der echten Spaltenbreiten
                             let segW = 0;
                             for (let i = 0; i < s.span; i++) segW += dayWidthPx(absCol + i);
                             segW -= 4;
@@ -1345,9 +1141,7 @@ function removeFromLayout(projectId: string) {
                                 }}
                                 title={title}
                               >
-                                {!isDragging && !isRunningProject ? (
-                                  <div className="absolute inset-0 bg-neutral-950/35" />
-                                ) : null}
+                                {!isDragging && !isRunningProject ? <div className="absolute inset-0 bg-neutral-950/35" /> : null}
 
                                 {showLabel ? (
                                   <div className="absolute inset-y-0 left-0 z-10 flex items-center pointer-events-none">
@@ -1375,57 +1169,64 @@ function removeFromLayout(projectId: string) {
     );
   }
 
-// ✅ Board links unverändert, Pool rechts (Drag&Drop Pool ↔ Board)
-return (
-  <div className="flex w-full h-full overflow-hidden gap-3">
-    {/* links: Original-Board */}
-    <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
-      <div className="flex-1 min-h-0 overflow-hidden">{renderSection(0, topWeeks, scrollTopRef)}</div>
-      <div className="flex-1 min-h-0 overflow-hidden">{renderSection(1, bottomWeeks, scrollBottomRef)}</div>
-    </div>
+  // ===============================
+  // ✅ FINALER RETURN (Board + Pool)
+  // ===============================
+  return (
+    <div className="flex w-full h-full overflow-hidden gap-3">
+      {/* ===== Board links ===== */}
+      <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
+        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(0, topWeeks, scrollTopRef)}</div>
+        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(1, bottomWeeks, scrollBottomRef)}</div>
+      </div>
 
-    {/* rechts: Projekt-Pool */}
-    <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
-      <div className="p-3 border-b border-neutral-800">
-        <div className="text-sm font-semibold text-neutral-100">Projekt-Pool</div>
-        <div className="text-xs text-neutral-400">Aktive Projekte, noch nicht im Board (Layout)</div>
-        <div className="text-[11px] text-neutral-500 mt-1">
-          Im Pool: <span className="text-neutral-200 font-medium">{poolProjects.length}</span>
+      {/* ===== Pool rechts ===== */}
+      <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden flex flex-col">
+        <div className="p-3 border-b border-neutral-800">
+          <div className="text-sm font-semibold text-neutral-100">Projekt-Pool</div>
+          <div className="text-xs text-neutral-400">Aktive Projekte, noch nicht im Board</div>
+          <div className="text-[11px] text-neutral-500 mt-1">
+            Im Pool: <span className="text-neutral-200 font-medium">{poolProjects.length}</span>
+          </div>
+        </div>
+
+        <div
+          className={`flex-1 p-2 overflow-y-auto space-y-2 ${draggingId && hoverPool ? "ring-2 ring-orange-500/70 ring-inset" : ""}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setHoverPool(true);
+            setHoverRowId(null);
+          }}
+          onDragLeave={() => setHoverPool(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            const pid = e.dataTransfer.getData("text/plain");
+            if (!pid) return;
+            removeFromLayout(pid);
+            setDraggingId(null);
+            clearDnDHovers();
+          }}
+          title="Hierhin ziehen = Projekt aus dem Board entfernen"
+        >
+          {poolProjects.length === 0 ? (
+            <div className="text-xs text-neutral-500 p-2">Alle aktiven Projekte sind eingeplant.</div>
+          ) : (
+            poolProjects.map((p: any) => (
+              <div
+                key={String(p.id)}
+                draggable
+                onDragStart={(e) => onDragStart(e, String(p.id))}
+                onDragEnd={onDragEnd}
+                className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 cursor-grab active:cursor-grabbing"
+                title="Ins Board ziehen: auf einen Mitarbeiter droppen"
+              >
+                <div className="text-xs font-medium text-neutral-100 truncate">{String(p.name ?? "Ohne Name")}</div>
+                <div className="text-[10px] text-neutral-500">ID: {String(p.id)}</div>
+              </div>
+            ))
+          )}
         </div>
       </div>
-
-      {/* Drop-Zone: Board → Pool */}
-      <div
-        className="p-2 overflow-y-auto h-full space-y-2"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const pid = e.dataTransfer.getData("text/plain");
-          if (!pid) return;
-          removeFromLayout(pid);
-          setDraggingId(null);
-        }}
-        title="Hierhin ziehen = Projekt aus dem Board entfernen"
-      >
-        {poolProjects.length === 0 ? (
-          <div className="text-xs text-neutral-500 p-2">Alle aktiven Projekte sind eingeplant.</div>
-        ) : (
-          poolProjects.map((p: any) => (
-            <div
-              key={String(p.id)}
-              draggable
-              onDragStart={(e) => onDragStart(e, String(p.id))}
-              onDragEnd={onDragEnd}
-              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 cursor-grab active:cursor-grabbing"
-              title="Ins Board ziehen: auf einen Mitarbeiter droppen"
-            >
-              <div className="text-xs font-medium text-neutral-100 truncate">{String(p.name ?? "Ohne Name")}</div>
-              <div className="text-[10px] text-neutral-500">ID: {String(p.id)}</div>
-            </div>
-          ))
-        )}
-      </div>
     </div>
-  </div>
-);
+  );
 }
