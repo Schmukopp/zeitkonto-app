@@ -262,6 +262,10 @@ export function loadTimeState(): State {
   return fallback();
 }
 
+// Backward-Compat: App.tsx (und evtl. andere Stellen) importiert noch loadState
+export function loadState(): State {
+  return loadTimeState();
+}
 
 export function saveState(s: State) {
   // Backup der vorherigen Version
