@@ -211,6 +211,21 @@ function meisterColorClass(meisterId: string | null) {
   const idx = hashStr(meisterId) % palette.length;
   return palette[idx];
 }
+function meisterSoftBgClass(meisterId: string | null) {
+  if (!meisterId) return "bg-orange-500/15";
+  const palette = [
+    "bg-orange-500/15",
+    "bg-blue-500/15",
+    "bg-emerald-500/15",
+    "bg-fuchsia-500/15",
+    "bg-amber-400/15",
+    "bg-cyan-500/15",
+    "bg-lime-500/15",
+    "bg-violet-500/15",
+  ];
+  const idx = hashStr(meisterId) % palette.length;
+  return palette[idx];
+}
 
 function bereichColorClass(b: Bereich) {
   switch (b) {
@@ -1181,35 +1196,41 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                             
                           </div>
 
-                            {/* Step 2: Plan-Outline als Segmente (Lücken bei Unterbrechung durch andere Projekte) */}
+                            {/* Step 2C: Plan-Segmente (blass in Meisterfarbe) + Label pro Segment */}
 <div className="absolute inset-0 pointer-events-none">
-  {buildPlanOutlineSegments(p, rowId).map((s, idx) => (
-    <div
-      key={`${p.key}__planseg__${idx}`}
-      className="absolute top-[1px] bottom-[1px] border border-orange-500/80 rounded-lg"
-      style={{
-        left: s.start * CELL_W + 1,
-        width: s.span * CELL_W - 2,
-      }}
-    />
-  ))}
+  {buildPlanOutlineSegments(p, rowId).map((s, idx) => {
+    const softBg = meisterSoftBgClass(p.meisterId);
+
+    // Label nur anzeigen, wenn Segment breit genug ist (sonst wird es nur Lärm)
+    const showLabel = s.span * CELL_W >= 140;
+
+    return (
+      <div
+        key={`${p.key}__planseg__${idx}`}
+        className={`absolute top-[1px] bottom-[1px] rounded-lg border border-orange-500/80 ${softBg}`}
+        style={{
+          left: s.start * CELL_W + 1,
+          width: s.span * CELL_W - 2,
+        }}
+      >
+        {showLabel ? (
+          <div className="absolute left-2 top-1.5 flex items-center gap-2 min-w-0">
+            <div className={`h-3 w-3 rounded-sm ${meisterColorClass(p.meisterId)}`} />
+            <div className="truncate text-[11px] font-semibold text-neutral-100">
+              {p.name}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  })}
 </div>
+
 
                           {/* Fortschritt */}
                           <div className="absolute inset-0">{renderProjectProgressOverlay(p)}</div>
 
-                          {/* Label nur am Startteil */}
-                          {p.relStart === 0 ? (
-                            <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <div className={`h-3.5 w-3.5 rounded-sm ${meisterBadge}`} />
-                                <div className="truncate text-[12px] font-semibold text-neutral-100">{p.name}</div>
-                                <div className="ml-2 text-[10px] text-neutral-300 whitespace-nowrap">
-                                  {minutesToHM(totalMin)} / {minutesToHM(planMin)}
-                                </div>
-                              </div>
-                            </div>
-                          ) : null}
+                          
                         </div>
                       );
                     })}
