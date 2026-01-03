@@ -445,18 +445,28 @@ export default function Board({ state, setState, ms }: Props) {
   }
 
   const activeProjects = useMemo(
-    () => (projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv"),
-    [projects]
-  );
+  () => (projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv"),
+  [projects]
+);
 
-  // ✅ EIN layout (LayoutMap) — keine Doppel-Definition!
-  const layout: LayoutMap = ((state as any)?.boardLayout ?? {}) as LayoutMap;
+// ✅ EIN layout (Single Source of Truth für Board / Pool)
+// MUSS vor poolProjects / boardProjects stehen
+const layout: LayoutMap = ((state as any)?.boardLayout ?? {}) as LayoutMap;
 
-  // ✅ Pool = aktive Projekte, die NICHT im Layout stehen
-  const poolProjects = useMemo(
-    () => activeProjects.filter((p: any) => !layout?.[String(p.id)]),
-    [activeProjects, layout]
-  );
+// ✅ Pool = aktive Projekte OHNE Layout
+const poolProjects = useMemo(
+  () => activeProjects.filter((p: any) => !layout[String(p.id)]),
+  [activeProjects, layout]
+);
+
+// ✅ Board = aktive Projekte MIT Layout
+const boardProjects = useMemo(
+  () => activeProjects.filter((p: any) => !!layout[String(p.id)]),
+  [activeProjects, layout]
+);
+
+
+
 
   const projectById = useMemo(() => {
     const m = new Map<string, any>();
@@ -523,13 +533,11 @@ const autoFallback: LayoutMap = {};
     return Math.max(1, cols);
   }
 
- // Blocks: NUR Projekte, die wirklich im Layout stehen
+ // Blocks: NUR Projekte, die wirklich im Layout stehen (sonst Pool)
 const rawBlocks: Block[] = useMemo(() => {
   if (mitarbeiter.length === 0) return [];
 
-  const planned = activeProjects.filter((p: any) => layout?.[String(p.id)]);
-
-  return planned.map((p: any) => {
+  return boardProjects.map((p: any) => {
     const pid = String(p.id);
     const meisterId = pickPlannerMeisterId(p);
 
@@ -545,12 +553,12 @@ const rawBlocks: Block[] = useMemo(() => {
     const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
     const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
+
     const firstIso = projTotals.firstIso.get(pid) ?? null;
     const firstColTop = firstIso ? colForIso(0, firstIso) : null;
-
     const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
-    const startIso = firstIso ?? plannedStartIso;
 
+    const startIso = firstIso ?? plannedStartIso;
     const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
     return {
@@ -566,7 +574,8 @@ const rawBlocks: Block[] = useMemo(() => {
       firstIso,
     };
   }).filter(Boolean) as Block[];
-}, [activeProjects, layout, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+}, [boardProjects, layout, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+
 
 
   /**
@@ -720,6 +729,15 @@ const rawBlocks: Block[] = useMemo(() => {
       return next;
     });
   }
+function removeFromLayout(projectId: string) {
+  setState((s) => {
+    const next = structuredClone(s) as any;
+    if (!next.boardLayout) return next;
+
+    delete next.boardLayout[String(projectId)];
+    return next;
+  });
+}
 
   function onDragStart(e: React.DragEvent, projectId: string) {
     setDraggingId(projectId);
@@ -1357,37 +1375,26 @@ const rawBlocks: Block[] = useMemo(() => {
     );
   }
 
-// ✅ Board links unverändert, Pool rechts (mit Drag & Drop)
+// ✅ Board links unverändert, Pool rechts (Drag&Drop Pool ↔ Board)
 return (
   <div className="flex w-full h-full overflow-hidden gap-3">
-    {/* ===== Board (unverändert) ===== */}
+    {/* links: Original-Board */}
     <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {renderSection(0, topWeeks, scrollTopRef)}
-      </div>
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {renderSection(1, bottomWeeks, scrollBottomRef)}
-      </div>
+      <div className="flex-1 min-h-0 overflow-hidden">{renderSection(0, topWeeks, scrollTopRef)}</div>
+      <div className="flex-1 min-h-0 overflow-hidden">{renderSection(1, bottomWeeks, scrollBottomRef)}</div>
     </div>
 
-    {/* ===== Projekt-Pool (rechts) ===== */}
+    {/* rechts: Projekt-Pool */}
     <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
       <div className="p-3 border-b border-neutral-800">
-        <div className="text-sm font-semibold text-neutral-100">
-          Projekt-Pool
-        </div>
-        <div className="text-xs text-neutral-400">
-          Aktive Projekte, noch nicht im Board (Layout)
-        </div>
+        <div className="text-sm font-semibold text-neutral-100">Projekt-Pool</div>
+        <div className="text-xs text-neutral-400">Aktive Projekte, noch nicht im Board (Layout)</div>
         <div className="text-[11px] text-neutral-500 mt-1">
-          Im Pool:{" "}
-          <span className="text-neutral-200 font-medium">
-            {poolProjects.length}
-          </span>
+          Im Pool: <span className="text-neutral-200 font-medium">{poolProjects.length}</span>
         </div>
       </div>
 
-      {/* === DROP-ZONE: Board → Pool === */}
+      {/* Drop-Zone: Board → Pool */}
       <div
         className="p-2 overflow-y-auto h-full space-y-2"
         onDragOver={(e) => e.preventDefault()}
@@ -1395,15 +1402,13 @@ return (
           e.preventDefault();
           const pid = e.dataTransfer.getData("text/plain");
           if (!pid) return;
-          removeFromLayout(pid);   // 🔥 Projekt aus Board entfernen
+          removeFromLayout(pid);
           setDraggingId(null);
         }}
         title="Hierhin ziehen = Projekt aus dem Board entfernen"
       >
         {poolProjects.length === 0 ? (
-          <div className="text-xs text-neutral-500 p-2">
-            Alle aktiven Projekte sind eingeplant.
-          </div>
+          <div className="text-xs text-neutral-500 p-2">Alle aktiven Projekte sind eingeplant.</div>
         ) : (
           poolProjects.map((p: any) => (
             <div
@@ -1414,16 +1419,13 @@ return (
               className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 cursor-grab active:cursor-grabbing"
               title="Ins Board ziehen: auf einen Mitarbeiter droppen"
             >
-              <div className="text-xs font-medium text-neutral-100 truncate">
-                {String(p.name ?? "Ohne Name")}
-              </div>
-              <div className="text-[10px] text-neutral-500">
-                ID: {String(p.id)}
-              </div>
+              <div className="text-xs font-medium text-neutral-100 truncate">{String(p.name ?? "Ohne Name")}</div>
+              <div className="text-[10px] text-neutral-500">ID: {String(p.id)}</div>
             </div>
           ))
         )}
       </div>
     </div>
   </div>
-)}
+);
+}
