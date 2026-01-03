@@ -467,25 +467,10 @@ export default function Board({ state, setState, ms }: Props) {
   const projTotals = useMemo(() => extractProjectTotals(state as any), [state]);
   const empDayProjIdx = useMemo(() => extractEmployeeDayProjectMinutes(state as any), [state]);
 
-  const autoFallback: LayoutMap = useMemo(() => {
-    const out: LayoutMap = {};
-    let cursor = 0;
-    let rr = 0;
+  // ✅ Pool-Logik: Projekte ohne Layout werden NICHT automatisch ins Board gelegt.
+// Sie stehen ausschließlich im Projekt-Pool (rechts).
+const autoFallback: LayoutMap = {};
 
-    for (const p of activeProjects) {
-      const pid = String(p.id);
-      if (layout[pid]) continue;
-
-      const defaultOperativ = pickOperativDefaultId(p);
-      const fallbackRowId = String(defaultOperativ ?? mitarbeiter[rr % Math.max(1, mitarbeiter.length)]?.id ?? "m1");
-      rr++;
-
-      out[pid] = { rowId: fallbackRowId, startCol: clamp(cursor, 0, COLS - 1) };
-      cursor = clamp(cursor + 3, 0, COLS - 1);
-    }
-
-    return out;
-  }, [activeProjects, layout, mitarbeiter]);
 
   /**
    * Dynamische Dauer in Cols (Mo–Sa Raster):
@@ -538,54 +523,51 @@ export default function Board({ state, setState, ms }: Props) {
     return Math.max(1, cols);
   }
 
-  // Blocks: echter Start + dynamische Länge
-  const rawBlocks: Block[] = useMemo(() => {
-    if (mitarbeiter.length === 0) return [];
+ // Blocks: NUR Projekte, die wirklich im Layout stehen
+const rawBlocks: Block[] = useMemo(() => {
+  if (mitarbeiter.length === 0) return [];
 
-    return activeProjects.map((p: any) => {
-      const pid = String(p.id);
-      const meisterId = pickPlannerMeisterId(p);
+  const planned = activeProjects.filter((p: any) => layout?.[String(p.id)]);
 
-      const pos = layout[pid] ?? autoFallback[pid];
-      const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
-      const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
-      const lane = clamp(Number(pos?.lane ?? 0), 0, 1); // Step 3B.2: 2 Lanes
+  return planned.map((p: any) => {
+    const pid = String(p.id);
+    const meisterId = pickPlannerMeisterId(p);
 
-      const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
-      const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
+    const pos = layout[pid];
+    if (!pos) return null;
 
-      // Ziel-Minuten: verlängert wenn über Kalk
-      const minutesTarget = Math.max(planMinuten, bookedMinuten);
+    const plannedStartColTop = clamp(pos.startCol ?? 0, 0, COLS - 1);
+    const rowId = String(pos.rowId);
+    const lane = clamp(Number(pos.lane ?? 0), 0, 1);
 
-      // Planung -> ISO (aus Board-Grid)
-      const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
+    const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
+    const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
+    const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
-      // Echter Start (erste Buchung) setzt den Start direkt auf die passende Board-Spalte
-      const firstIso = projTotals.firstIso.get(pid) ?? null;
-      const firstColTop = firstIso ? colForIso(0, firstIso) : null;
-      const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
+    const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
+    const firstIso = projTotals.firstIso.get(pid) ?? null;
+    const firstColTop = firstIso ? colForIso(0, firstIso) : null;
 
-      // StartIso des Blocks (für Dauerberechnung)
-      const startIso = firstIso ?? plannedStartIso;
+    const startColTop = clamp(firstColTop ?? plannedStartColTop, 0, COLS - 1);
+    const startIso = firstIso ?? plannedStartIso;
 
-      // Dynamische Dauer in Cols (Parallelität verkürzt, Überzug verlängert)
-      const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
+    const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
-      return {
-        id: pid,
-        name: String(p.name ?? "Projekt"),
-        rowId,
-        lane,
-        startColTop,
-        spanCols,
-        meisterId,
-        planMinuten,
-        startIso,
-        firstIso,
-      };
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProjects, layout, autoFallback, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+    return {
+      id: pid,
+      name: String(p.name ?? "Projekt"),
+      rowId,
+      lane,
+      startColTop,
+      spanCols,
+      meisterId,
+      planMinuten,
+      startIso,
+      firstIso,
+    };
+  }).filter(Boolean) as Block[];
+}, [activeProjects, layout, mitarbeiter, projTotals, topWeeks, bottomWeeks]);
+
 
   /**
    * Step 3B.2: Ketten-Layout NUR innerhalb einer Lane
@@ -1375,36 +1357,73 @@ export default function Board({ state, setState, ms }: Props) {
     );
   }
 
-  // ✅ Board links unverändert, Pool rechts
-  return (
-    <div className="flex w-full h-full overflow-hidden gap-3">
-      <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
-        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(0, topWeeks, scrollTopRef)}</div>
-        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(1, bottomWeeks, scrollBottomRef)}</div>
+// ✅ Board links unverändert, Pool rechts (mit Drag & Drop)
+return (
+  <div className="flex w-full h-full overflow-hidden gap-3">
+    {/* ===== Board (unverändert) ===== */}
+    <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {renderSection(0, topWeeks, scrollTopRef)}
       </div>
-
-      <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
-        <div className="p-3 border-b border-neutral-800">
-          <div className="text-sm font-semibold text-neutral-100">Projekt-Pool</div>
-          <div className="text-xs text-neutral-400">Aktive Projekte, noch nicht im Board (Layout)</div>
-          <div className="text-[11px] text-neutral-500 mt-1">
-            Im Pool: <span className="text-neutral-200 font-medium">{poolProjects.length}</span>
-          </div>
-        </div>
-
-        <div className="p-2 overflow-y-auto h-full space-y-2">
-          {poolProjects.length === 0 ? (
-            <div className="text-xs text-neutral-500 p-2">Alle aktiven Projekte sind eingeplant.</div>
-          ) : (
-            poolProjects.map((p: any) => (
-              <div key={String(p.id)} className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1">
-                <div className="text-xs font-medium text-neutral-100 truncate">{String(p.name ?? "Ohne Name")}</div>
-                <div className="text-[10px] text-neutral-500">ID: {String(p.id)}</div>
-              </div>
-            ))
-          )}
-        </div>
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {renderSection(1, bottomWeeks, scrollBottomRef)}
       </div>
     </div>
-  );
-}
+
+    {/* ===== Projekt-Pool (rechts) ===== */}
+    <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden">
+      <div className="p-3 border-b border-neutral-800">
+        <div className="text-sm font-semibold text-neutral-100">
+          Projekt-Pool
+        </div>
+        <div className="text-xs text-neutral-400">
+          Aktive Projekte, noch nicht im Board (Layout)
+        </div>
+        <div className="text-[11px] text-neutral-500 mt-1">
+          Im Pool:{" "}
+          <span className="text-neutral-200 font-medium">
+            {poolProjects.length}
+          </span>
+        </div>
+      </div>
+
+      {/* === DROP-ZONE: Board → Pool === */}
+      <div
+        className="p-2 overflow-y-auto h-full space-y-2"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const pid = e.dataTransfer.getData("text/plain");
+          if (!pid) return;
+          removeFromLayout(pid);   // 🔥 Projekt aus Board entfernen
+          setDraggingId(null);
+        }}
+        title="Hierhin ziehen = Projekt aus dem Board entfernen"
+      >
+        {poolProjects.length === 0 ? (
+          <div className="text-xs text-neutral-500 p-2">
+            Alle aktiven Projekte sind eingeplant.
+          </div>
+        ) : (
+          poolProjects.map((p: any) => (
+            <div
+              key={String(p.id)}
+              draggable
+              onDragStart={(e) => onDragStart(e, String(p.id))}
+              onDragEnd={onDragEnd}
+              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 cursor-grab active:cursor-grabbing"
+              title="Ins Board ziehen: auf einen Mitarbeiter droppen"
+            >
+              <div className="text-xs font-medium text-neutral-100 truncate">
+                {String(p.name ?? "Ohne Name")}
+              </div>
+              <div className="text-[10px] text-neutral-500">
+                ID: {String(p.id)}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  </div>
+)}
