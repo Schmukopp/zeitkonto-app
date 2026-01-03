@@ -22,6 +22,31 @@ const COLS = 24; // 4 Wochen * 6 Tage
 const CELL_W = 80;
 const NAME_COL_W = 240;
 
+// ===== Step 3C: Horizontale Tagesgewichtung (nur Darstellung) =====
+// Mo–Do breiter | Fr/Sa schmal
+function dayWidthFactor(col: number) {
+  const dayIdx = col % 6; // 0=Mo ... 4=Fr 5=Sa
+  if (dayIdx <= 3) return 1.25; // Mo–Do
+  return 0.7; // Fr & Sa
+}
+
+function dayWidthPx(col: number) {
+  return Math.round(CELL_W * dayWidthFactor(col));
+}
+
+function colLeftPx(col: number) {
+  let x = 0;
+  for (let i = 0; i < col; i++) x += dayWidthPx(i);
+  return x;
+}
+
+function totalGridWidthPx() {
+  let w = 0;
+  for (let i = 0; i < COLS; i++) w += dayWidthPx(i);
+  return w;
+}
+
+
 // Band 1 (oben): Projektspur
 const PROJECT_BAND_H = 32;
 
@@ -801,41 +826,42 @@ export default function Board({ state, setState, ms }: Props) {
         const proj = projectById.get(projId);
         const meisterId = pickPlannerMeisterId(proj);
 
-        const widthPxRaw = (Math.max(0, e.minuten) / denom) * CELL_W;
-        const widthPx = clamp(Math.round(widthPxRaw), 10, CELL_W - 4);
+        const dayW = dayWidthPx(col);
 
-                // Wunsch-Lane aus Pref, sonst 0 (aber capped)
-        let lane = lanePref.has(projId) ? (lanePref.get(projId) as number) : 0;
-        lane = clamp(lane, 0, MAX_BOOKING_LANES - 1);
+const widthPxRaw = (Math.max(0, e.minuten) / denom) * dayW;
+const widthPx = clamp(Math.round(widthPxRaw), 10, dayW - 4);
 
-        // Prüfen ob passt, sonst nach unten suchen.
-        // Wir erweitern Lanes nur bis MAX_BOOKING_LANES, danach "quetschen" wir in die letzte Lane.
-        while (true) {
-          if (lane >= usedPxByLane.length) {
-            if (usedPxByLane.length < MAX_BOOKING_LANES) usedPxByLane.push(0);
-            else break; // keine neuen Lanes mehr möglich
-          }
+// Wunsch-Lane aus Pref, sonst 0 (aber capped)
+let lane = lanePref.has(projId) ? (lanePref.get(projId) as number) : 0;
+lane = clamp(lane, 0, MAX_BOOKING_LANES - 1);
 
-          const safeLane = Math.min(lane, usedPxByLane.length - 1);
-          const used = usedPxByLane[safeLane];
+// Prüfen ob passt, sonst nach unten suchen.
+// Wir erweitern Lanes nur bis MAX_BOOKING_LANES, danach "quetschen" wir in die letzte Lane.
+while (true) {
+  if (lane >= usedPxByLane.length) {
+    if (usedPxByLane.length < MAX_BOOKING_LANES) usedPxByLane.push(0);
+    else break; // keine neuen Lanes mehr möglich
+  }
 
-          if (used + widthPx + 2 <= CELL_W - 2) {
-            lane = safeLane;
-            break;
-          }
+  const safeLane = Math.min(lane, usedPxByLane.length - 1);
+  const used = usedPxByLane[safeLane];
 
-          // nächste Lane versuchen, aber nie über MAX hinaus
-          if (lane >= MAX_BOOKING_LANES - 1) {
-            lane = MAX_BOOKING_LANES - 1;
-            break;
-          }
-          lane++;
-        }
+  if (used + widthPx + 2 <= dayW - 2) {
+    lane = safeLane;
+    break;
+  }
 
+  // nächste Lane versuchen, aber nie über MAX hinaus
+  if (lane >= MAX_BOOKING_LANES - 1) {
+    lane = MAX_BOOKING_LANES - 1;
+    break;
+  }
+  lane++;
+}
 
-        const leftPx = clamp(usedPxByLane[lane] + 2, 2, CELL_W - 2);
-        const maxW = Math.max(6, CELL_W - 2 - leftPx);
-        const w = Math.min(widthPx, maxW);
+const leftPx = clamp(usedPxByLane[lane] + 2, 2, dayW - 2);
+const maxW = Math.max(6, dayW - 2 - leftPx);
+const w = Math.min(widthPx, maxW);
 
         usedPxByLane[lane] = leftPx + w;
 
@@ -935,7 +961,8 @@ export default function Board({ state, setState, ms }: Props) {
           key={`${rowId}__${iso}__status`}
           className="absolute z-[5] rounded-md text-[10px] font-semibold text-neutral-950 px-1.5 py-0.5 shadow"
           style={{
-            left: col * CELL_W + 6,
+            left: colLeftPx(col) + 6,
+
             top: PROJECT_BAND_H + Math.max(MIN_BOOKING_LANES, lanes) * BOOKING_LANE_H - 18,
 
           }}
@@ -951,104 +978,88 @@ export default function Board({ state, setState, ms }: Props) {
 
   // ===== Projekt-Fortschritt-Overlay (parallel = mehr Tageskapazität => echte Kalender-Kompression) =====
   function renderProjectProgressOverlay(p: BlockPart) {
-    const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
-    const planMin = Math.max(0, p.planMinuten);
-    const first = p.firstIso;
+  const totalMin = projTotals.totalMin.get(p.projectId) ?? 0;
+  const planMin = Math.max(0, p.planMinuten);
+  const first = p.firstIso;
 
-    if (totalMin <= 0 || !first) return null;
+  if (totalMin <= 0 || !first) return null;
 
-    // Hinweis: Wir rendern nur die sichtbaren Tage dieses BlockParts (p.span),
-    // aber global ist die Reihenfolge weiterhin ab firstIso + (relStart + localDay).
-    let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
-    let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : totalMin;
+  // Blau = innerhalb Kalk, Rot = über Kalk
+  let remainIn = planMin > 0 ? Math.min(totalMin, planMin) : 0;
+  let remainOver = planMin > 0 ? Math.max(0, totalMin - planMin) : totalMin;
 
-    const partsStartPx = p.relStart * CELL_W;
-    const partsEndPx = (p.relStart + p.span) * CELL_W;
+  const segs: Array<{ left: number; width: number; kind: "in" | "over" }> = [];
 
-    const segs: Array<{ left: number; width: number; kind: "in" | "over" }> = [];
+  for (let localDay = 0; localDay < p.span; localDay++) {
+    if (remainIn <= 0 && remainOver <= 0) break;
 
-    const area = projTotals.areaMin.get(p.projectId) ?? ({ maschine: 0, bank: 0, lack: 0, montage: 0 } as any);
+    // Spaltenindex im sichtbaren Grid (für variable Breiten)
+    const col = p.startCol + localDay;
+    const dayW = dayWidthPx(col);
 
-    const rawTotal = Math.max(0, (area.maschine ?? 0) + (area.bank ?? 0) + (area.lack ?? 0) + (area.montage ?? 0));
-    const areaTotal = Math.max(1, rawTotal);
+    // Linker Offset innerhalb dieses Segment-Blocks (Summe der vorherigen Tage)
+    let dayOffset = 0;
+    for (let i = 0; i < localDay; i++) dayOffset += dayWidthPx(p.startCol + i);
 
-    const areaShares = ([
-      { b: "maschine" as Bereich, share: (area.maschine ?? 0) / areaTotal },
-      { b: "bank" as Bereich, share: (area.bank ?? 0) / areaTotal },
-      { b: "lack" as Bereich, share: (area.lack ?? 0) / areaTotal },
-      { b: "montage" as Bereich, share: (area.montage ?? 0) / areaTotal },
-    ] as Array<{ b: Bereich; share: number }>).filter((x) => x.share > 0);
+    // Globaler Tag seit Projektstart (firstIso) = relStart + localDay
+    const globalDay = p.relStart + localDay;
+    const dayIso = isoDate(addDays(parseIso(first), globalDay));
+    const key = `${p.projectId}__${dayIso}`;
+    const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-    for (let localDay = 0; localDay < p.span; localDay++) {
-      if (remainIn <= 0 && remainOver <= 0) break;
+    // Anzeige-Regel bleibt: Fortschritt nur bei echter Buchung
+    const dayCapMin = bookedThatDay;
+    if (dayCapMin <= 0) continue;
 
-      const globalDay = p.relStart + localDay;
+    const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
+    const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
 
-      const dayStartPx = globalDay * CELL_W;
-      const dayEndPx = dayStartPx + CELL_W;
+    const used = takeIn > 0 ? takeIn : takeOver;
+    if (used <= 0) continue;
 
-      const partVisibleStart = Math.max(partsStartPx, dayStartPx);
-      const partVisibleEnd = Math.min(partsEndPx, dayEndPx);
-      if (partVisibleEnd - partVisibleStart <= 0) continue;
+    // Breite relativ zur Tagesbreite (variable Spalten)
+    const wPx = clamp(Math.round((used / dayCapMin) * dayW), 2, dayW);
 
-      const dayIso = isoDate(addDays(parseIso(first), globalDay));
-      const key = `${p.projectId}__${dayIso}`;
-      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
-
-      // Anzeige-Regel: Blau/Rot nur bei echten Buchungen.
-      // Ohne Buchung -> keine Segmente (kein Phantom-Fortschritt).
-      const dayCapMin = bookedThatDay;
-
-      if (dayCapMin <= 0) continue;
-
-      const takeIn = remainIn > 0 ? Math.min(remainIn, dayCapMin) : 0;
-      const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin) : 0;
-
-      const used = takeIn > 0 ? takeIn : takeOver;
-      if (used <= 0) continue;
-
-      // Breite innerhalb des Tages relativ zur Tageskapazität (Parallelität = Kompression sichtbar)
-      const wPx = clamp(Math.round((used / dayCapMin) * CELL_W), 2, CELL_W);
-
-      const segLeft = Math.max(partVisibleStart, dayStartPx);
-      const segRight = Math.min(partVisibleEnd, dayStartPx + wPx);
-      const segW = segRight - segLeft;
-
-      if (segW > 0) {
-        segs.push({
-          left: segLeft - partsStartPx,
-          width: segW,
-          kind: takeIn > 0 ? "in" : "over",
-        });
-      }
-
-      if (takeIn > 0) remainIn -= takeIn;
-      else remainOver -= takeOver;
+    if (wPx > 0) {
+      segs.push({
+        left: dayOffset,
+        width: wPx,
+        kind: takeIn > 0 ? "in" : "over",
+      });
     }
 
-    if (segs.length === 0) return null;
-
-    return (
-      <>
-        {segs.map((s, idx) => {
-          if (s.kind === "in") {
-            return (
-              <div
-                key={idx}
-                className="absolute top-0 bottom-0 bg-blue-500/45"
-                style={{ left: s.left, width: s.width }}
-              >
-                <div className="absolute inset-0 bg-blue-900/10" />
-              </div>
-            );
-          }
-          return (
-            <div key={idx} className="absolute top-0 bottom-0 bg-red-600" style={{ left: s.left, width: s.width }} />
-          );
-        })}
-      </>
-    );
+    if (takeIn > 0) remainIn -= takeIn;
+    else remainOver -= takeOver;
   }
+
+  if (segs.length === 0) return null;
+
+  return (
+    <>
+      {segs.map((s, idx) => {
+        if (s.kind === "in") {
+          return (
+            <div
+              key={idx}
+              className="absolute top-0 bottom-0 bg-blue-500/45"
+              style={{ left: s.left, width: s.width }}
+            >
+              <div className="absolute inset-0 bg-blue-900/10" />
+            </div>
+          );
+        }
+        return (
+          <div
+            key={idx}
+            className="absolute top-0 bottom-0 bg-red-600"
+            style={{ left: s.left, width: s.width }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
   function computeProjectLaneMap(parts: BlockPart[]) {
     // Greedy Lane-Packing nach Zeit-Überlappung, capped auf MAX_PROJECT_LANES
     // Lane-Entscheidung pro Projekt (projectId), nicht pro Segment
@@ -1120,7 +1131,13 @@ export default function Board({ state, setState, ms }: Props) {
                         ? "bg-orange-500 text-neutral-950 ring-2 ring-orange-300/70"
                         : "bg-neutral-900 text-neutral-300"
                     }`}
-                    style={{ width: 6 * CELL_W, height: 40 }}
+                    style={{
+  width: Array.from({ length: 6 })
+    .map((_, i) => dayWidthPx(idx * 6 + i))
+    .reduce((a, b) => a + b, 0),
+  height: 40,
+}}
+
                   >
                     <div>KW {kw}</div>
                     <div className={`${isCurrent ? "text-neutral-900" : "text-neutral-500"} text-[10px] font-medium`}>
@@ -1153,7 +1170,8 @@ export default function Board({ state, setState, ms }: Props) {
                     className={`text-[11px] text-center border-r border-neutral-800 py-1 ${
                       isWeekBoundary ? "bg-neutral-900/50" : "bg-neutral-950"
                     } ${isActive ? "ring-2 ring-blue-500/70 bg-blue-500/10" : ""} text-neutral-300`}
-                    style={{ width: CELL_W }}
+                    style={{ width: dayWidthPx(i) }}
+
                   >
                     <div className="leading-4">{label}</div>
                     <div className="text-[10px] text-neutral-500 leading-4">{dateLabel}</div>
@@ -1179,14 +1197,16 @@ export default function Board({ state, setState, ms }: Props) {
                     <div className="truncate font-medium">{m.name}</div>
                   </div>
 
-                  <div className="relative" style={{ width: COLS * CELL_W, height: rowH }}>
+                  <div className="relative" style={{ width: totalGridWidthPx(), height: rowH }}>
+
                     {/* Raster */}
                     <div className="absolute inset-0">
                       {Array.from({ length: COLS }).map((_, col) => (
                         <div
                           key={col}
                           className="absolute top-0 bottom-0 border-r border-neutral-800 bg-neutral-950"
-                          style={{ left: col * CELL_W, width: CELL_W }}
+                          style={{ left: colLeftPx(col), width: dayWidthPx(col) }}
+
                           onDragOver={(e) => e.preventDefault()}
                           onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
                         >
@@ -1208,7 +1228,8 @@ export default function Board({ state, setState, ms }: Props) {
                     {/* Buchungen */}
                     {pack.segs.map((seg) => {
                       const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
-                      const leftPx = seg.col * CELL_W + seg.leftPx;
+                      const leftPx = colLeftPx(seg.col) + seg.leftPx;
+
 
                       return (
                         <div
@@ -1253,22 +1274,31 @@ export default function Board({ state, setState, ms }: Props) {
                           {segs.map((s, idx) => {
                             const softBg = meisterSoftBgClass(p.meisterId);
 
-                            const segLeft = (p.startCol + s.start) * CELL_W + 2;
-                           const lane = clamp(Number(p.lane ?? 0), 0, 1);
+// Step 3C: variable Tagesbreiten (nur Darstellung)
+const absCol = p.startCol + s.start;
+const segLeft = colLeftPx(absCol) + 2;
+
+// Lane/Top/Height (Step 3B bleibt)
+const lane = clamp(Number(p.lane ?? 0), 0, 1);
 const segTop = 2 + lane * PROJECT_LANE_H;
 const segH = PROJECT_LANE_H - 4;
 
+// Breite = Summe der echten Spaltenbreiten
+let segW = 0;
+for (let i = 0; i < s.span; i++) segW += dayWidthPx(absCol + i);
+segW -= 4;
 
-const segW = s.span * CELL_W - 4;
-                            const segPart: BlockPart = {
-                              ...p,
-                              key: `${p.key}__seg__${idx}`,
-                              startCol: p.startCol + s.start,
-                              span: s.span,
-                              relStart: p.relStart + s.start,
-                            };
+const segPart: BlockPart = {
+  ...p,
+  key: `${p.key}__seg__${idx}`,
+  startCol: p.startCol + s.start,
+  span: s.span,
+  relStart: p.relStart + s.start,
+};
 
-                            const showLabel = s.span * CELL_W >= 140;
+// Label-Entscheidung nach Pixelbreite (nicht mehr nach CELL_W)
+const showLabel = segW >= 140;
+
 
                             return (
                               <div
@@ -1283,7 +1313,13 @@ const segW = s.span * CELL_W - 4;
                                     ? "border-blue-500 bg-neutral-900 text-neutral-100"
                                     : `border-orange-500/80 ${softBg} text-neutral-100`
                                 }`}
-                                style={{ top: segTop, left: segLeft, width: segW, height: segH }}
+                                style={{
+  top: 2 + clamp(Number(p.lane ?? 0), 0, 1) * PROJECT_LANE_H,
+  left: segLeft,
+  width: segW,
+  height: segH,
+}}
+
                                 title={title}
                               >
                                 {!isDragging && !isRunningProject ? (
