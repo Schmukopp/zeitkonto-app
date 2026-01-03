@@ -231,7 +231,10 @@ export default function Heute({
     });
   }
 
-  const projects = (state.projects ?? []).filter((p: any) => p?.active);
+  const projects = (state.projects ?? []).filter(
+  (p: any) => p?.active !== false && p?.status !== "archiv"
+);
+
 
   return (
     <div className="flex flex-col gap-3">

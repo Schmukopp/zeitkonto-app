@@ -451,7 +451,11 @@ export default function Board({ state, setState, ms }: Props) {
     return sollMinutenForIsoDate(modell, iso);
   }
 
-  const activeProjects = useMemo(() => (projects ?? []).filter((p: any) => !!p?.active), [projects]);
+  const activeProjects = useMemo(
+  () => (projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv"),
+  [projects]
+);
+
 
   const projectById = useMemo(() => {
     const m = new Map<string, any>();
