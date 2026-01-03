@@ -35,14 +35,11 @@ const ROW_H = PROJECT_BAND_H + BOOKING_LANES * BOOKING_LANE_H;
 
 // Basis-Kapazität pro Worker und Tag (10h = 600min)
 const BASE_CAP_MIN = 600;
-
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
-function calcPlannedCols(planMinuten: number): number {
-  const m = Math.max(0, Math.round(planMinuten || 0));
-  return Math.max(1, Math.ceil(m / BASE_CAP_MIN));
-}
+
+
 
 // ===== Kalenderfest (UTC) =====
 function isoDate(d: Date) {
@@ -433,56 +430,56 @@ export default function Board({ state, setState, ms }: Props) {
   }, [activeProjects, layout, mitarbeiter]);
 
   /**
-   * Dynamische Dauer in Cols (Mo–Sa Raster):
-   * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
-   * - Tage mit Buchung: Kapazität = BASE_CAP_MIN * workerCountThatDay
-   * - Tage ohne Buchung: workerCount = 1 (Default)
-   * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte bleibt, aber verbraucht keine Minuten)
-   */
-  function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
-    if (minutesTarget <= 0) return 1;
+ * Dynamische Dauer in Cols (Mo–Sa Raster):
+ * - minutesTarget = max(kalkMinuten, gebuchteMinuten) => verlängert bei Überschreitung
+ * - Tageskapazität basiert auf Parallelität:
+ *     dayCap = BASE_CAP_MIN * workerCountThatDay
+ *   workerCountThatDay = Anzahl Mitarbeiter, die an diesem Projekt an diesem Tag gebucht haben
+ * - Freitag+Samstag: wenn KEINE Buchung => Pause (Spalte zählt, verbraucht aber keine Minuten)
+ */
+function calcNeededColsFromStart(projectId: string, startIso: string, minutesTarget: number): number {
+  if (minutesTarget <= 0) return 1;
 
-    let remain = minutesTarget;
-    let cols = 0;
+  let remain = minutesTarget;
+  let cols = 0;
 
-    const MAX_COLS = COLS * 2; // über 2 Reihen hinaus wird visuell eh abgeschnitten
-    for (let i = 0; i < MAX_COLS; i++) {
-      const dayIso = isoDate(addDays(parseIso(startIso), i));
-      const key = `${projectId}__${dayIso}`;
+  const MAX_COLS = COLS * 2; // visuell wird eh bei 2 Reihen abgeschnitten
 
-      const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
+  const start = parseIso(startIso);
 
-      const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
-      const isFriOrSat = dow === 5 || dow === 6;
+  for (let i = 0; i < MAX_COLS; i++) {
+    const dayIso = isoDate(addDays(start, i));
+    const key = `${projectId}__${dayIso}`;
 
-            // Freitag + Samstag:
-      // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
-      // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
-      const dayCap = isFriOrSat
-        ? bookedThatDay
-        : bookedThatDay > 0
-          ? bookedThatDay
-          : BASE_CAP_MIN;
+    const bookedThatDay = projTotals.dayMin.get(key) ?? 0;
 
-      if (dayCap <= 0) {
-        cols++;
-        continue;
-      }
+    const dow = parseIso(dayIso).getUTCDay(); // 0=So..6=Sa
+    const isFriOrSat = dow === 5 || dow === 6;
 
-      const take = Math.min(remain, dayCap);
-      remain -= take;
-
+    // Freitag + Samstag:
+    // - nur dann Minuten abbauen, wenn dort wirklich gebucht wurde
+    // - sonst Pause (Spalte zählt, aber verbraucht keine Minuten)
+    if (isFriOrSat && bookedThatDay <= 0) {
       cols++;
-      if (remain <= 0) break;
-
-
-
-      cols++;
-      if (remain <= 0) break;
+      continue;
     }
 
-    return Math.max(1, cols);
+    // Parallelität: wie viele Mitarbeiter haben an diesem Tag am Projekt gebucht?
+    const workerCount = Math.max(1, projTotals.dayWorkers.get(key)?.size ?? 1);
+
+    // Tageskapazität ist SOLL (10h pro Worker), NICHT "bookedThatDay"
+    const dayCap = BASE_CAP_MIN * workerCount;
+
+    const take = Math.min(remain, dayCap);
+    remain -= take;
+
+    cols++;
+    if (remain <= 0) break;
   }
+
+  return Math.max(1, cols);
+}
+
 
   // Blocks: echter Start + dynamische Länge
   const rawBlocks: Block[] = useMemo(() => {
@@ -494,17 +491,15 @@ export default function Board({ state, setState, ms }: Props) {
 
       const pos = layout[pid] ?? autoFallback[pid];
       const plannedStartColTop = clamp(pos?.startCol ?? 0, 0, COLS - 1);
-      const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
+            const rowId = String(pos?.rowId ?? pickOperativDefaultId(p) ?? mitarbeiter[0]?.id ?? "m1");
 
-           const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
+      const planMinuten = Math.max(0, Math.round((safeNumber(p.kalkStunden) || 0) * 60));
+      const bookedMinuten = projTotals.totalMin.get(pid) ?? 0;
 
-      // Board Plan Step 1:
-      // spanCols (Planungslänge) kommt ausschließlich aus kalkulierten Stunden (10h/Tag).
-      // Ist-/Überzug-/Parallelität beeinflussen NICHT die Blocklänge, nur die Füllung (Overlay).
-      const plannedCols = calcPlannedCols(planMinuten);
+      // Ziel-Minuten: verlängert wenn über Kalk
+      const minutesTarget = Math.max(planMinuten, bookedMinuten);
 
-
-            // Planung -> ISO (aus Board-Grid)
+      // Planung -> ISO (aus Board-Grid)
       const plannedStartIso = isoDate(dateForCol(0, plannedStartColTop));
 
       // Echter Start (erste Buchung) setzt den Start direkt auf die passende Board-Spalte
@@ -515,22 +510,21 @@ export default function Board({ state, setState, ms }: Props) {
       // StartIso des Blocks (für Dauerberechnung)
       const startIso = firstIso ?? plannedStartIso;
 
+      // Dynamische Dauer in Cols (Parallelität verkürzt, Überzug verlängert)
+      const spanCols = clamp(calcNeededColsFromStart(pid, startIso, minutesTarget), 1, COLS * 2);
 
-           // Planungslänge in Cols (nur aus Planung)
-      const spanCols = clamp(plannedCols, 1, COLS * 2);
+      return {
+        id: pid,
+        name: String(p.name ?? "Projekt"),
+        rowId,
+        startColTop,
+        spanCols,
+        meisterId,
+        planMinuten,
+        startIso,
+        firstIso,
+      };
 
-
-           return {
-  id: pid,
-  name: String(p.name ?? "Projekt"),
-  rowId,
-  startColTop,
-  spanCols,
-  meisterId,
-  planMinuten,
-  startIso,
-  firstIso,
-};
 
 
     });
@@ -834,12 +828,13 @@ function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
     const rawTotal = Math.max(0, (area.maschine ?? 0) + (area.bank ?? 0) + (area.lack ?? 0) + (area.montage ?? 0));
     const areaTotal = Math.max(1, rawTotal);
 
-    const areaShares: Array<{ b: Bereich; share: number }> = [
-      { b: "maschine", share: (area.maschine ?? 0) / areaTotal },
-      { b: "bank", share: (area.bank ?? 0) / areaTotal },
-      { b: "lack", share: (area.lack ?? 0) / areaTotal },
-      { b: "montage", share: (area.montage ?? 0) / areaTotal },
-    ].filter((x) => x.share > 0);
+    const areaShares = ([
+  { b: "maschine" as Bereich, share: (area.maschine ?? 0) / areaTotal },
+  { b: "bank" as Bereich, share: (area.bank ?? 0) / areaTotal },
+  { b: "lack" as Bereich, share: (area.lack ?? 0) / areaTotal },
+  { b: "montage" as Bereich, share: (area.montage ?? 0) / areaTotal },
+] as Array<{ b: Bereich; share: number }>).filter((x) => x.share > 0);
+
 
 
 

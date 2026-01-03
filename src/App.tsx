@@ -241,7 +241,8 @@ export default function App() {
             }}
           />
         ) : tab === "zeitstrahl" ? (
-          <Zeitstrahlen state={state} setState={setState} ms={ms} settings={settings} />
+          <Zeitstrahlen {...({ state, setState, ms, settings } as any)} />
+
         ) : tab === "abschluss" ? (
           <ProjektAbschluss
             state={state}
