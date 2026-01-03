@@ -64,6 +64,22 @@ export default function AdminProjekte(p: Props) {
         .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }))
     : [];
 
+  function deleteProjekt(projektId: string) {
+    const ok = window.confirm(
+      "Projekt wirklich löschen?\n\n" +
+        "Hinweis:\n" +
+        "• Das Projekt wird entfernt\n" +
+        "• Buchungen bleiben erhalten (Historie/Woche/Abschluss)\n\n" +
+        "Fortfahren?"
+    );
+    if (!ok) return;
+
+    p.setState((s) => ({
+      ...s,
+      projects: (s.projects ?? []).filter((pr: any) => pr.id !== projektId),
+    }));
+  }
+
   return (
     <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -77,9 +93,8 @@ export default function AdminProjekte(p: Props) {
         <button
           className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-orange-500"
           onClick={() => {
-  p.setState((s) => createProject(s));
-}}
-
+            p.setState((s) => createProject(s));
+          }}
           type="button"
         >
           + Neues Projekt
@@ -103,7 +118,10 @@ export default function AdminProjekte(p: Props) {
           const effectiveMin = hasAreaCalc ? kMinTotal : fallbackMin;
 
           return (
-            <div key={proj.id} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3 flex flex-col gap-3">
+            <div
+              key={proj.id}
+              className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3 flex flex-col gap-3"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-medium">
                   {proj.active !== false ? (
@@ -115,18 +133,30 @@ export default function AdminProjekte(p: Props) {
                   <span className="text-neutral-100">{proj.id}</span>
                 </div>
 
-                <button
-                  className={
-                    "rounded-xl border px-3 py-2 text-sm " +
-                    (proj.active !== false
-                      ? "border-neutral-700 bg-neutral-950 hover:border-orange-500"
-                      : "border-orange-500 bg-neutral-950 text-orange-300 hover:bg-orange-500 hover:text-neutral-950")
-                  }
-                  onClick={() => p.setState((s) => setProjectActive(s, proj.id, !(proj.active !== false)))}
-                  type="button"
-                >
-                  {proj.active !== false ? "Deaktivieren" : "Aktivieren"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={
+                      "rounded-xl border px-3 py-2 text-sm " +
+                      (proj.active !== false
+                        ? "border-neutral-700 bg-neutral-950 hover:border-orange-500"
+                        : "border-orange-500 bg-neutral-950 text-orange-300 hover:bg-orange-500 hover:text-neutral-950")
+                    }
+                    onClick={() =>
+                      p.setState((s) => setProjectActive(s, proj.id, !(proj.active !== false)))
+                    }
+                    type="button"
+                  >
+                    {proj.active !== false ? "Deaktivieren" : "Aktivieren"}
+                  </button>
+
+                  <button
+                    className="rounded-xl border border-red-600/60 bg-neutral-950 px-3 py-2 text-sm text-red-400 hover:bg-red-600 hover:text-neutral-950"
+                    onClick={() => deleteProjekt(proj.id)}
+                    type="button"
+                  >
+                    Löschen
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -137,15 +167,14 @@ export default function AdminProjekte(p: Props) {
                     value={proj.name}
                     onFocus={selectAllOnFocus}
                     onChange={(e) => {
-  const v = e.target.value;
-  p.setState((s) =>
-    upsertProject(s, {
-      ...proj,
-      name: v,
-    })
-  );
-}}
-
+                      const v = e.target.value;
+                      p.setState((s) =>
+                        upsertProject(s, {
+                          ...proj,
+                          name: v,
+                        })
+                      );
+                    }}
                     onBlur={() =>
                       p.setState((s) =>
                         upsertProject(s, {
@@ -363,3 +392,4 @@ export default function AdminProjekte(p: Props) {
     </div>
   );
 }
+
