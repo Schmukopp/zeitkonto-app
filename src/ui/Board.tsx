@@ -759,6 +759,61 @@ function calcNeededColsFromStart(projectId: string, startIso: string, minutesTar
 
     return out;
   }
+  
+  // Fokus auf laufendes Projekt
+  useEffect(() => {
+    const pid = running?.projektId ? String(running.projektId) : null;
+    if (!pid) return;
+
+    const topPart = blockParts.find((p) => p.projectId === pid && p.weekRow === 0 && p.relStart === 0);
+    const part = topPart ?? blockParts.find((p) => p.projectId === pid);
+    if (!part) return;
+
+    const sc = part.weekRow === 0 ? scrollTopRef.current : scrollBottomRef.current;
+    if (!sc) return;
+
+    const x = NAME_COL_W + part.startCol * CELL_W - sc.clientWidth * 0.35;
+    sc.scrollTo({ left: Math.max(0, x), behavior: "smooth" });
+  }, [running?.projektId, blockParts]);
+
+    // ===== Step 2: Plan-Linie mit Lücken =====
+  // Regel: Wenn dieses Projekt an einem Tag KEINE Buchung hat, aber der Mitarbeiter an dem Tag
+  // an einem ANDEREN Projekt gebucht ist, dann wird die Plan-Outline an diesem Tag unterbrochen.
+  function hasOtherProjectBooking(rowId: string, iso: string, projectId: string): boolean {
+    const entries = empDayProjIdx.get(`${rowId}__${iso}`) ?? [];
+    return entries.some((e) => String(e.projektId) !== String(projectId) && (e.minuten ?? 0) > 0);
+  }
+
+  function buildPlanOutlineSegments(p: BlockPart, rowId: string): Array<{ start: number; span: number }> {
+    const segs: Array<{ start: number; span: number }> = [];
+
+    let curStart: number | null = null;
+    let curLen = 0;
+
+    for (let i = 0; i < p.span; i++) {
+      const iso = isoDate(dateForCol(p.weekRow, p.startCol + i));
+      const bookedThisProject = (projTotals.dayMin.get(`${p.projectId}__${iso}`) ?? 0) > 0;
+
+      // Lücke nur dann, wenn anderes Projekt läuft UND dieses Projekt nicht gebucht ist
+      const gap = !bookedThisProject && hasOtherProjectBooking(rowId, iso, p.projectId);
+      const visible = !gap;
+
+      if (visible) {
+        if (curStart === null) curStart = i;
+        curLen++;
+      } else {
+        if (curStart !== null) {
+          segs.push({ start: curStart, span: curLen });
+          curStart = null;
+          curLen = 0;
+        }
+      }
+    }
+
+    if (curStart !== null) segs.push({ start: curStart, span: curLen });
+    return segs;
+  }
+
 // ===== Status-Overlay (Urlaub / Ü-Abbau / Krank) =====
 function renderStatusOverlay(rowId: string, weekRow: 0 | 1) {
   const out: React.ReactNode[] = [];
@@ -1079,12 +1134,13 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                           onDragStart={(e) => onDragStart(e, p.projectId)}
                           onDragEnd={onDragEnd}
                           className={`absolute z-20 rounded-lg border overflow-hidden select-none ${
-                            isDragging
-                              ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
-                              : isRunningProject
-                              ? "border-blue-500 bg-neutral-900 text-neutral-100"
-                              : "border-orange-500/80 bg-neutral-900 text-neutral-100"
-                          }`}
+  isDragging
+    ? "border-orange-500 bg-neutral-800 text-neutral-100 opacity-70"
+    : isRunningProject
+    ? "border-blue-500 bg-neutral-900 text-neutral-100"
+    : "border-neutral-700 bg-neutral-900 text-neutral-100"
+}`}
+
                           style={{ top: blockTop, left: blockLeft, width: blockW, height: blockH }}
                           title={`${p.name}\nGesamt: ${minutesToHM(totalMin)} / Kalk: ${minutesToHM(planMin)}\nStart: ${
                             p.firstIso ?? "—"
@@ -1124,6 +1180,20 @@ const takeOver = takeIn === 0 && remainOver > 0 ? Math.min(remainOver, dayCapMin
                             })}
                             
                           </div>
+
+                            {/* Step 2: Plan-Outline als Segmente (Lücken bei Unterbrechung durch andere Projekte) */}
+<div className="absolute inset-0 pointer-events-none">
+  {buildPlanOutlineSegments(p, rowId).map((s, idx) => (
+    <div
+      key={`${p.key}__planseg__${idx}`}
+      className="absolute top-[1px] bottom-[1px] border border-orange-500/80 rounded-lg"
+      style={{
+        left: s.start * CELL_W + 1,
+        width: s.span * CELL_W - 2,
+      }}
+    />
+  ))}
+</div>
 
                           {/* Fortschritt */}
                           <div className="absolute inset-0">{renderProjectProgressOverlay(p)}</div>
