@@ -41,10 +41,12 @@ function cloneWochenModell(m: WochenModell): WochenModell {
 }
 
 function normalizeGeburtsdatum(v: unknown): string {
+  // Admin Freeze Step 1:
+  // Leer bleibt leer. Default-Datum wird ausschließlich im Seed gesetzt.
   const s = (typeof v === "string" ? v : "").trim();
-  // Minimal: leer -> default. (Kein Hard-Blocking, nur Stabilität.)
-  return s || "1990-01-01";
+  return s;
 }
+
 
 function normalizeMitarbeiter(raw: any): Mitarbeiter {
   const id = (typeof raw?.id === "string" && raw.id.trim()) ? raw.id.trim() : `m${Date.now().toString(16)}`;
