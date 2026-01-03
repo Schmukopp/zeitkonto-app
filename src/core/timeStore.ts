@@ -2,6 +2,8 @@
 import type { Buchung, Projekt, Bereich } from "./timeTypes";
 
 const LS_KEY = "orgaboard_time_v1";
+const LS_BAK = `${LS_KEY}.bak`;
+
 
 /**
  * Arbeitsart ist dein Projekt-SOLL-Splitting.
@@ -170,80 +172,8 @@ function normalizeBuchung(b: any): Buchung | null {
   return fixed as Buchung;
 }
 
-export function loadState(): State {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<State>;
-
-      const projects: Projekt[] = (parsed.projects ?? []).map((p: any) => {
-        const fixed: any = {
-          ...p,
-          id: str(p?.id, uid()),
-          name: str(p?.name, "Projekt"),
-          active: p?.active !== false,
-
-          kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
-
-          kunde: p?.kunde != null ? str(p.kunde) : undefined,
-          notiz: p?.notiz != null ? str(p.notiz) : undefined,
-
-          hauptdarstellerId: p?.hauptdarstellerId != null ? str(p.hauptdarstellerId) : undefined,
-          zugeordnetAnId: p?.zugeordnetAnId != null ? str(p.zugeordnetAnId) : undefined,
-
-          arbeitsarten: normalizeArbeitsarten(p),
-
-          planNettoVkEur: clamp(num(p?.planNettoVkEur) || 0, 0, 99999999),
-          planMaterialEur: clamp(num(p?.planMaterialEur) || 0, 0, 99999999),
-
-          istNettoVkEur: clamp(num(p?.istNettoVkEur) || 0, 0, 99999999),
-          istMaterialEur: clamp(num(p?.istMaterialEur) || 0, 0, 99999999),
-        };
-
-        return fixed as Projekt;
-      });
-
-      // ✅ WICHTIG: Buchungen normalisieren (Datum/IDs/Minuten)
-      const buchungenRaw: any[] = Array.isArray(parsed.buchungen) ? (parsed.buchungen as any[]) : [];
-      const buchungen: Buchung[] = buchungenRaw
-        .map(normalizeBuchung)
-        .filter((x): x is Buchung => !!x);
-
-      let running: RunningTimer | null = (parsed.running as any) ?? null;
-      if (running) {
-        const fixed: RunningTimer = {
-          mitarbeiterId: str((running as any).mitarbeiterId),
-          projektId: str((running as any).projektId),
-          bereich: (running as any).bereich as Bereich,
-          startTs: num((running as any).startTs) || Date.now(),
-          datum: str(normalizeIsoDatum((running as any).datum) || todayIso(), todayIso()),
-          note: (running as any).note != null ? str((running as any).note) : undefined,
-        };
-
-        if (!fixed.mitarbeiterId || !fixed.projektId || !fixed.bereich) running = null;
-        else running = fixed;
-      }
-
-      const out: State = {
-        projects:
-          projects.length > 0
-            ? projects
-            : ([{ id: "p1", name: "Allgemein", active: true, kalkStunden: 0 }] as any),
-        buchungen,
-        running,
-        boardLayout: (parsed as any).boardLayout ?? undefined,
-      };
-
-      // reparierte Daten zurückschreiben
-      saveState(out);
-
-      return out;
-    }
-  } catch (err) {
-    console.warn("loadState failed", err);
-  }
-
-  return {
+export function loadTimeState(): State {
+  const fallback = (): State => ({
     projects: [
       { id: "p1", name: "Allgemein", active: true, kalkStunden: 0 } as any,
       { id: "p2", name: "Projekt A", active: true, kalkStunden: 10 } as any,
@@ -251,16 +181,100 @@ export function loadState(): State {
     ],
     buchungen: [],
     running: null,
+  });
+
+  const raw = localStorage.getItem(LS_KEY);
+  const rawBak = localStorage.getItem(LS_BAK);
+
+  const parseAndNormalize = (parsed: any): State => {
+    // Projekte normalisieren (minimal defensiv)
+    const projectsRaw: any[] = Array.isArray(parsed?.projects) ? parsed.projects : [];
+    const projects: Projekt[] = projectsRaw
+      .map((p: any) => ({
+        ...p,
+        id: str(p?.id, uid()),
+        name: str(p?.name, "Projekt"),
+        active: p?.active !== false,
+        kalkStunden: clamp(num(p?.kalkStunden) || 0, 0, 99999),
+      }))
+      .filter((p: any) => !!p?.id);
+
+    // ✅ Buchungen normalisieren (Datum/IDs/Minuten)
+    const buchungenRaw: any[] = Array.isArray(parsed?.buchungen) ? (parsed.buchungen as any[]) : [];
+    const buchungen: Buchung[] = buchungenRaw.map(normalizeBuchung).filter((x): x is Buchung => !!x);
+
+    let running: RunningTimer | null = (parsed?.running as any) ?? null;
+    if (running) {
+      const fixed: RunningTimer = {
+        mitarbeiterId: str((running as any).mitarbeiterId),
+        projektId: str((running as any).projektId),
+        bereich: (running as any).bereich as Bereich,
+        startTs: num((running as any).startTs) || Date.now(),
+        datum: str(normalizeIsoDatum((running as any).datum) || todayIso(), todayIso()),
+        note: (running as any).note != null ? str((running as any).note) : undefined,
+      };
+
+      if (!fixed.mitarbeiterId || !fixed.projektId || !fixed.bereich) running = null;
+      else running = fixed;
+    }
+
+    return {
+      projects:
+        projects.length > 0 ? projects : ([{ id: "p1", name: "Allgemein", active: true, kalkStunden: 0 }] as any),
+      buchungen,
+      running,
+      boardLayout: (parsed as any)?.boardLayout ?? undefined,
+    };
   };
+
+  // 1) Hauptkey probieren
+  if (raw && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      const out = parseAndNormalize(parsed);
+
+      // Reparierte Daten zurückschreiben (ohne Backup-Verlust)
+      saveState(out);
+
+      return out;
+    } catch (err) {
+      console.warn("loadTimeState failed", err);
+    }
+  }
+
+  // 2) Backup probieren + automatisch wiederherstellen
+  if (rawBak && rawBak.trim()) {
+    try {
+      const parsedBak = JSON.parse(rawBak);
+      const out = parseAndNormalize(parsedBak);
+
+      // Restore: Backup -> Hauptkey
+      localStorage.setItem(LS_KEY, rawBak);
+      saveState(out);
+
+      return out;
+    } catch (err) {
+      console.warn("loadTimeState backup failed", err);
+    }
+  }
+
+  // 3) Fallback
+  return fallback();
 }
 
+
 export function saveState(s: State) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(s));
-  } catch (err) {
-    console.warn("saveState failed", err);
-  }
+  // Backup der vorherigen Version
+  localStorage.setItem(LS_BAK, localStorage.getItem(LS_KEY) || "");
+  localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
+
+// Backward-Compat: falls irgendwo noch saveTimeState genutzt wird
+export function saveTimeState(s: State) {
+  saveState(s);
+}
+
+
 
 export function ensureOneStatusPerDay(b: Buchung[], mitarbeiterId: string, datum: string) {
   return (b ?? []).filter(
