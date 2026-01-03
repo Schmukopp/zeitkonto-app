@@ -2,8 +2,6 @@ import React, { useMemo, useState } from "react";
 import type { State } from "../core/timeStore";
 import { setProjectActive, upsertProject } from "../core/timeStore";
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
-import { loadBoardIds, loadNachkalkIds, markProjectFinished } from "../core/boardStore";
-import type { Bereich } from "../core/timeTypes";
 
 type Props = {
   state: State;
@@ -33,24 +31,15 @@ function fmt1(n: number): string {
 
 function fmtMoney(n: number): string {
   const x = Number(n);
-  if (!Number.isFinite(x)) return "0,00";
+  if (!Number.isFinite(x)) return "0.00";
   return x.toFixed(2);
-}
-
-function bereichToArbeitsart(b: Bereich) {
-  const v = String(b);
-  if (v === "maschine") return "maschine";
-  if (v === "bank") return "bank";
-  if (v === "lack") return "lack";
-  if (v === "montage") return "montage";
-  return null;
 }
 
 type IstMinMap = Record<string, number>;
 function calcIstMinTotalByProjekt(state: State): IstMinMap {
   const out: IstMinMap = {};
   for (const b of state.buchungen ?? []) {
-    if (!b || b.art !== "arbeit") continue;
+    if (!b || (b as any).art !== "arbeit") continue;
     const pid = (b as any).projektId as string | undefined;
     if (!pid) continue;
     const mins = Number((b as any).minuten) || 0;
@@ -79,37 +68,41 @@ export default function ProjektAbschluss(p: Props) {
   const [note, setNote] = useState<string>("");
 
   const projects = p.state.projects ?? [];
-  const byId = useMemo(() => new Map(projects.map((x: any) => [x.id, x])), [projects]);
-
-  const boardIds = useMemo(() => loadBoardIds(), [projects]);
-  const nachkalkIds = useMemo(() => loadNachkalkIds(), [projects]);
-
-  const boardProjects = useMemo(() => boardIds.map((id) => byId.get(id)).filter(Boolean) as any[], [boardIds, byId]);
-  const nachkalkProjects = useMemo(
-    () => nachkalkIds.map((id) => byId.get(id)).filter(Boolean) as any[],
-    [nachkalkIds, byId]
-  );
+  const byId = useMemo(() => new Map(projects.map((x: any) => [String(x.id), x])), [projects]);
 
   const istTotal = useMemo(() => calcIstMinTotalByProjekt(p.state), [p.state]);
 
+  // ✅ Single Source of Truth: Listen direkt aus timeStore ableiten
+  const boardProjects = useMemo(() => {
+    return projects.filter((pr: any) => pr?.status !== "archiv" && pr?.active !== false);
+  }, [projects]);
+
+  const nachkalkProjects = useMemo(() => {
+    // "fertig, aber noch nicht archiviert"
+    return projects.filter((pr: any) => pr?.status !== "archiv" && pr?.active === false);
+  }, [projects]);
+
   const boardMine = useMemo(() => {
-    const mine = boardProjects.filter((x) => x?.zugeordnetAnId === p.mitarbeiterId);
-    const other = boardProjects.filter((x) => x?.zugeordnetAnId !== p.mitarbeiterId);
+    const mine = boardProjects.filter((x: any) => x?.zugeordnetAnId === p.mitarbeiterId);
+    const other = boardProjects.filter((x: any) => x?.zugeordnetAnId !== p.mitarbeiterId);
     return { mine, other };
   }, [boardProjects, p.mitarbeiterId]);
 
-  const [selectedId, setSelectedId] = useState<string>(() => boardMine.mine[0]?.id ?? boardMine.other[0]?.id ?? "");
-  const selected = selectedId ? byId.get(selectedId) : undefined;
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    return String(boardMine.mine[0]?.id ?? boardMine.other[0]?.id ?? "");
+  });
+
+  const selected = selectedId ? byId.get(String(selectedId)) : undefined;
 
   const ziel = Number(p.wertZielEurH) || 0;
 
   const selectedSollMin = selected ? calcSollMinTotal(selected) : 0;
-  const selectedIstMin = selectedId ? (istTotal[selectedId] ?? 0) : 0;
+  const selectedIstMin = selectedId ? (istTotal[String(selectedId)] ?? 0) : 0;
   const selectedDeltaMin = selectedSollMin - selectedIstMin;
 
   function finishSelected() {
     if (!selectedId) return;
-    const proj = byId.get(selectedId) as any;
+    const proj = byId.get(String(selectedId)) as any;
     if (!proj) return;
 
     const now = Date.now();
@@ -127,7 +120,7 @@ export default function ProjektAbschluss(p: Props) {
     const sollMinuten = Number(selectedSollMin) || 0;
     const ueberzugMinuten = Math.max(0, istMinuten - sollMinuten);
 
-    // ✅ 0) Abschlussdaten dauerhaft im Projekt speichern
+    // ✅ Abschlussdaten dauerhaft speichern (Basis Archiv + Statistik)
     p.setState((s) =>
       upsertProject(s, {
         ...proj,
@@ -138,33 +131,26 @@ export default function ProjektAbschluss(p: Props) {
           istMinuten: istMinuten,
           wertschoepfungEurProStd: istH > 0 ? wertProStd : 0,
           ueberzugMinuten: ueberzugMinuten > 0 ? ueberzugMinuten : 0,
-          // note/abschlussArt werden vorerst NICHT fest verdrahtet, damit wir den Datenvertrag schlank halten.
-          // Falls du sie speichern willst, erweitern wir ProjektAbschluss später gezielt.
+          // note & art optional später in Datenvertrag aufnehmen
         },
       } as any)
     );
 
-    // 1) Nachkalk + vom Board runter
-    markProjectFinished(selectedId);
+    // ✅ "fertig" = active false (aber noch NICHT archiviert)
+    p.setState((s) => setProjectActive(s, String(selectedId), false));
 
-    // 2) Projekt inaktiv setzen (Alt-Logik bleibt)
-    p.setState((s) => setProjectActive(s, selectedId, false));
-
-    // 3) Reset UI
     setNote("");
 
-    // 4) nächstes Projekt wählen
-    const newBoardIds = loadBoardIds();
-    const nextId =
-      newBoardIds.find((id) => {
-        const pr = byId.get(id) as any;
-        return pr?.zugeordnetAnId === p.mitarbeiterId;
-      }) ?? newBoardIds[0] ?? "";
-    setSelectedId(nextId);
+    // ✅ neues Projekt wählen (aus den aktuellen boardProjects)
+    const next =
+      boardProjects.find((x: any) => x?.zugeordnetAnId === p.mitarbeiterId)?.id ??
+      boardProjects[0]?.id ??
+      "";
+    setSelectedId(String(next));
   }
 
   function updateIst(pid: string, patch: Partial<{ istNettoVkEur: number; istMaterialEur: number }>) {
-    const proj = byId.get(pid) as any;
+    const proj = byId.get(String(pid)) as any;
     if (!proj) return;
     p.setState((s) =>
       upsertProject(s, {
@@ -202,29 +188,29 @@ export default function ProjektAbschluss(p: Props) {
       </div>
 
       <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-        <div className="text-lg font-semibold">Projekt wählen (vom Board)</div>
+        <div className="text-lg font-semibold">Projekt wählen (aktiv, nicht archiviert)</div>
         <div className="text-sm text-neutral-400">
-          Board: <span className="text-neutral-100">{boardProjects.length}</span> · Nachkalkulation:{" "}
+          Aktiv: <span className="text-neutral-100">{boardProjects.length}</span> · Nachkalkulation:{" "}
           <span className="text-neutral-100">{nachkalkProjects.length}</span>
         </div>
 
         {boardProjects.length === 0 ? (
-          <div className="mt-3 text-sm text-neutral-400">Es sind keine Projekte auf dem Board.</div>
+          <div className="mt-3 text-sm text-neutral-400">Es sind keine aktiven Projekte vorhanden.</div>
         ) : (
           <div className="mt-3 grid grid-cols-1 gap-3">
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
               <div className="text-sm font-medium text-neutral-100 mb-2">Deine Projekte (zugeordnet)</div>
 
               {boardMine.mine.length === 0 ? (
-                <div className="text-sm text-neutral-400">Keine Board-Projekte sind dir operativ zugeordnet.</div>
+                <div className="text-sm text-neutral-400">Keine aktiven Projekte sind dir operativ zugeordnet.</div>
               ) : (
                 <div className="grid grid-cols-1 gap-2">
-                  {boardMine.mine.map((proj) => (
+                  {boardMine.mine.map((proj: any) => (
                     <label
-                      key={proj.id}
+                      key={String(proj.id)}
                       className={
                         "flex items-center justify-between gap-2 rounded-xl border px-3 py-2 cursor-pointer " +
-                        (selectedId === proj.id
+                        (String(selectedId) === String(proj.id)
                           ? "border-orange-500 bg-neutral-950"
                           : "border-neutral-800 bg-neutral-900 hover:border-neutral-700")
                       }
@@ -232,14 +218,14 @@ export default function ProjektAbschluss(p: Props) {
                       <div className="min-w-0">
                         <div className="text-sm text-neutral-100 truncate">
                           {fmtName(proj.name)} <span className="text-neutral-500">·</span>{" "}
-                          <span className="text-neutral-400">{proj.id}</span>
+                          <span className="text-neutral-400">{String(proj.id)}</span>
                         </div>
                       </div>
                       <input
                         type="radio"
                         name="proj"
-                        checked={selectedId === proj.id}
-                        onChange={() => setSelectedId(proj.id)}
+                        checked={String(selectedId) === String(proj.id)}
+                        onChange={() => setSelectedId(String(proj.id))}
                         className="accent-orange-500"
                       />
                     </label>
@@ -249,18 +235,18 @@ export default function ProjektAbschluss(p: Props) {
             </div>
 
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
-              <div className="text-sm font-medium text-neutral-100 mb-2">Weitere Board-Projekte</div>
+              <div className="text-sm font-medium text-neutral-100 mb-2">Weitere aktive Projekte</div>
 
               {boardMine.other.length === 0 ? (
-                <div className="text-sm text-neutral-400">Keine weiteren Projekte auf dem Board.</div>
+                <div className="text-sm text-neutral-400">Keine weiteren aktiven Projekte vorhanden.</div>
               ) : (
                 <div className="grid grid-cols-1 gap-2">
-                  {boardMine.other.map((proj) => (
+                  {boardMine.other.map((proj: any) => (
                     <label
-                      key={proj.id}
+                      key={String(proj.id)}
                       className={
                         "flex items-center justify-between gap-2 rounded-xl border px-3 py-2 cursor-pointer " +
-                        (selectedId === proj.id
+                        (String(selectedId) === String(proj.id)
                           ? "border-orange-500 bg-neutral-950"
                           : "border-neutral-800 bg-neutral-900 hover:border-neutral-700")
                       }
@@ -268,7 +254,7 @@ export default function ProjektAbschluss(p: Props) {
                       <div className="min-w-0">
                         <div className="text-sm text-neutral-100 truncate">
                           {fmtName(proj.name)} <span className="text-neutral-500">·</span>{" "}
-                          <span className="text-neutral-400">{proj.id}</span>
+                          <span className="text-neutral-400">{String(proj.id)}</span>
                         </div>
                         <div className="text-xs text-neutral-500">
                           Zugeordnet: <span className="text-neutral-300">{fmtName(proj.zugeordnetAnId ?? "—")}</span>
@@ -277,8 +263,8 @@ export default function ProjektAbschluss(p: Props) {
                       <input
                         type="radio"
                         name="proj"
-                        checked={selectedId === proj.id}
-                        onChange={() => setSelectedId(proj.id)}
+                        checked={String(selectedId) === String(proj.id)}
+                        onChange={() => setSelectedId(String(proj.id))}
                         className="accent-orange-500"
                       />
                     </label>
@@ -294,28 +280,13 @@ export default function ProjektAbschluss(p: Props) {
         <div className="text-lg font-semibold">Abschluss</div>
 
         <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-          <button
-            type="button"
-            className={abschlussArt === "fertigung" ? btnActive : btn}
-            onClick={() => setAbschlussArt("fertigung")}
-            disabled={!selectedId}
-          >
+          <button type="button" className={abschlussArt === "fertigung" ? btnActive : btn} onClick={() => setAbschlussArt("fertigung")} disabled={!selectedId}>
             Fertigung fertig
           </button>
-          <button
-            type="button"
-            className={abschlussArt === "montage" ? btnActive : btn}
-            onClick={() => setAbschlussArt("montage")}
-            disabled={!selectedId}
-          >
+          <button type="button" className={abschlussArt === "montage" ? btnActive : btn} onClick={() => setAbschlussArt("montage")} disabled={!selectedId}>
             Montage fertig
           </button>
-          <button
-            type="button"
-            className={abschlussArt === "abgeholt" ? btnActive : btn}
-            onClick={() => setAbschlussArt("abgeholt")}
-            disabled={!selectedId}
-          >
+          <button type="button" className={abschlussArt === "abgeholt" ? btnActive : btn} onClick={() => setAbschlussArt("abgeholt")} disabled={!selectedId}>
             Abgeholt / geliefert
           </button>
         </div>
@@ -358,7 +329,7 @@ export default function ProjektAbschluss(p: Props) {
           <div className="text-sm text-neutral-400">
             Ausgewählt:{" "}
             <span className="text-neutral-100">
-              {selected ? `${fmtName((selected as any).name)} (${(selected as any).id})` : "—"}
+              {selected ? `${fmtName((selected as any).name)} (${String((selected as any).id)})` : "—"}
             </span>
           </div>
 
@@ -379,7 +350,7 @@ export default function ProjektAbschluss(p: Props) {
             <div className="text-sm text-neutral-400">Noch keine Projekte in Nachkalkulation.</div>
           ) : (
             nachkalkProjects.map((proj: any) => {
-              const pid = proj.id as string;
+              const pid = String(proj.id);
 
               const istMin = istTotal[pid] ?? 0;
               const istH = minutesToHours(istMin);
@@ -396,19 +367,14 @@ export default function ProjektAbschluss(p: Props) {
 
               const ok = hatIst && istH > 0 && wertProStd >= ziel;
 
-              const badge = !hatIst ? (
-                <span className="text-xs text-orange-300">· Nachkalk offen</span>
-              ) : (
-                <span className="text-xs text-neutral-500">· erfasst</span>
-              );
-
               return (
                 <div key={pid} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm text-neutral-100 truncate">
                         {fmtName(proj.name)} <span className="text-neutral-500">·</span>{" "}
-                        <span className="text-neutral-400">{pid}</span> {badge}
+                        <span className="text-neutral-400">{pid}</span>{" "}
+                        {!hatIst ? <span className="text-xs text-orange-300">· Nachkalk offen</span> : <span className="text-xs text-neutral-500">· erfasst</span>}
                       </div>
 
                       <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -455,11 +421,7 @@ export default function ProjektAbschluss(p: Props) {
                       </div>
                       <div>
                         Wert/Std:{" "}
-                        <span
-                          className={
-                            hatIst && istH > 0 ? (ok ? "text-neutral-100" : "text-orange-300") : "text-neutral-500"
-                          }
-                        >
+                        <span className={hatIst && istH > 0 ? (ok ? "text-neutral-100" : "text-orange-300") : "text-neutral-500"}>
                           {hatIst && istH > 0 ? `${fmtMoney(wertProStd)} €/h` : "—"}
                         </span>{" "}
                         <span className="text-xs text-neutral-500">· Ziel {Number(ziel).toFixed(0)} €/h</span>
