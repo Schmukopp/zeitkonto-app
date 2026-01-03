@@ -21,6 +21,8 @@ export type MitarbeiterState = {
 };
 
 const LS_KEY = "zeitkonto.mitarbeiter.v1";
+const LS_BAK = `${LS_KEY}.bak`;
+
 
 function clamp(n: number, min: number, max: number) {
   if (!Number.isFinite(n)) return min;
@@ -127,23 +129,47 @@ export function defaultMitarbeiter(id = "m1", name = "Mitarbeiter"): Mitarbeiter
 }
 
 export function loadMitarbeiterState(): MitarbeiterState {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) {
-      const seed = defaultMitarbeiter("m1", "Mitarbeiter");
-      return { selectedId: seed.id, mitarbeiter: [seed] };
-    }
-    const parsed = JSON.parse(raw);
-    return normalizeState(parsed);
-  } catch {
+  const seedState = () => {
     const seed = defaultMitarbeiter("m1", "Mitarbeiter");
     return { selectedId: seed.id, mitarbeiter: [seed] };
+  };
+
+  const raw = localStorage.getItem(LS_KEY);
+  const rawBak = localStorage.getItem(LS_BAK);
+
+  // 1) Hauptkey probieren
+  if (raw && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return normalizeState(parsed);
+    } catch {
+      // kaputt -> Backup versuchen
+    }
   }
+
+  // 2) Backup probieren + automatisch wiederherstellen
+  if (rawBak && rawBak.trim()) {
+    try {
+      const parsedBak = JSON.parse(rawBak);
+      // Restore: Backup wird wieder zum Hauptkey
+      localStorage.setItem(LS_KEY, rawBak);
+      return normalizeState(parsedBak);
+    } catch {
+      // Backup auch kaputt -> Seed
+    }
+  }
+
+  // 3) Seed (aber NICHT automatisch speichern!)
+  return seedState();
 }
 
+
 export function saveMitarbeiterState(s: MitarbeiterState) {
+  // Backup der vorherigen Version (falls vorhanden)
+  localStorage.setItem(LS_BAK, localStorage.getItem(LS_KEY) || "");
   localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
+
 
 export function getSelected(s: MitarbeiterState): Mitarbeiter | null {
   if (!s.selectedId) return null;
