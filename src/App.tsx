@@ -189,8 +189,8 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button className={tab === "heute" ? btnActive : btn} onClick={() => setTab("zeit")}>
-                Heute
+              <button className={tab === "zeit" ? btnActive : btn} onClick={() => setTab("zeit")}>
+                Zeit
               </button>
               <button className={tab === "woche" ? btnActive : btn} onClick={() => setTab("woche")}>
                 Woche
@@ -268,7 +268,7 @@ export default function App() {
             mitarbeiterName={mitarbeiterName}
             getTagesSollMinuten={getTagesSollMinuten}
           />
-        ) : (
+                ) : tab === "zeit" ? (
           <Heute
             state={state}
             setState={setState}
@@ -281,7 +281,8 @@ export default function App() {
             activeBookingProjektId={activeBookingProjektId}
             clearActiveBooking={() => setActiveBookingProjektId("")}
           />
-        )}
+        ) : null}
+
       </div>
     </div>
   );
