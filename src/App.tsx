@@ -23,6 +23,7 @@ import {
 import { loadSettings, saveSettings, type Settings } from "./core/settingsStore";
 
 import { recomputeMitarbeiterKonten } from "./core/timeRules";
+import Archiv from "./ui/Archiv";
 
 
 function todayIso() {
@@ -33,7 +34,8 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
-type Tab = "heute" | "woche" | "board" | "zeitstrahl" | "abschluss" | "admin";
+type Tab = "heute" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "admin";
+
 
 const LS_ACTIVE_BOOKING = "orgaboard.activeBookingProjektId.v1";
 
@@ -202,6 +204,10 @@ export default function App() {
               <button className={tab === "abschluss" ? btnActive : btn} onClick={() => setTab("abschluss")}>
                 Abschluss
               </button>
+              <button className={tab === "archiv" ? btnActive : btn} onClick={() => setTab("archiv")}>
+  Archiv
+</button>
+
               <button className={tab === "admin" ? btnActive : btn} onClick={() => setTab("admin")}>
                 Admin
               </button>
@@ -240,8 +246,11 @@ export default function App() {
               setTab("heute");
             }}
           />
+          
         ) : tab === "zeitstrahl" ? (
           <Zeitstrahlen {...({ state, setState, ms, settings } as any)} />
+         ) : tab === "archiv" ? (
+  <Archiv state={state} />
 
         ) : tab === "abschluss" ? (
           <ProjektAbschluss
