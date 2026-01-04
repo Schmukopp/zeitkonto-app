@@ -565,3 +565,31 @@ export function archiveProject(s: State, projektId: string, jahr: number): State
   saveState(s);
   return s;
 }
+/**
+ * ✅ Hartes Löschen (nur für Korrekturen)
+ * - entfernt Projekt aus projects
+ * - entfernt ggf. boardLayout-Eintrag
+ * - Buchungen bleiben absichtlich erhalten (Historie)
+ */
+export function deleteProject(s: State, projektId: string): State {
+  const id = str(projektId);
+
+  // Projekt entfernen
+  s.projects = (s.projects ?? []).filter((p: any) => String(p?.id) !== id) as any;
+
+  // Layout bereinigen (falls vorhanden)
+  if (s.boardLayout && typeof s.boardLayout === "object") {
+    const next: Record<string, BoardLayoutPos> = {};
+    for (const [pid, pos] of Object.entries(s.boardLayout)) {
+      if (String(pid) !== id) next[String(pid)] = pos as BoardLayoutPos;
+    }
+    s.boardLayout = next;
+  }
+
+  // ⚠️ Absichtlich NICHT:
+  // - Buchungen löschen
+  // Denn: Zeit-Historie/Überstunden/Urlaub/Abschlussdaten sollen nicht "verschwinden".
+
+  saveState(s);
+  return s;
+}

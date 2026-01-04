@@ -1,6 +1,7 @@
 import React from "react";
 import type { State } from "../core/timeStore";
-import { createProject, setProjectActive, upsertProject, archiveProject } from "../core/timeStore";
+import { createProject, setProjectActive, upsertProject, archiveProject, deleteProject } from "../core/timeStore";
+
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 
 function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement>) {
@@ -184,6 +185,25 @@ export default function AdminProjekte(p: Props) {
                   >
                     Ins Archiv
                   </button>
+                  <button
+  className="rounded-xl border border-red-700 bg-neutral-950 px-3 py-2 text-sm text-red-300 hover:bg-red-600 hover:text-neutral-950"
+  onClick={() => {
+    const ok = window.confirm(
+      "Projekt wirklich LÖSCHEN?\n\n" +
+        "⚠️ Das Projekt wird entfernt.\n" +
+        "• Board-Zuordnung wird gelöscht\n" +
+        "• Buchungen bleiben bestehen (Zeit-Historie)\n\n" +
+        "Nur für Fehlerkorrekturen gedacht!"
+    );
+    if (!ok) return;
+
+    p.setState((s) => deleteProject(s, String(proj.id)));
+  }}
+  type="button"
+>
+  Löschen
+</button>
+
                 </div>
               </div>
 
