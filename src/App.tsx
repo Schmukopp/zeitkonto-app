@@ -250,7 +250,8 @@ export default function App() {
         ) : tab === "zeitstrahl" ? (
           <Zeitstrahlen {...({ state, setState, ms, settings } as any)} />
          ) : tab === "archiv" ? (
-  <Archiv state={state} />
+    <Archiv state={state} ms={ms} />
+
 
         ) : tab === "abschluss" ? (
           <ProjektAbschluss

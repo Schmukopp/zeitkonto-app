@@ -177,18 +177,21 @@ export default function Heute({
   );
 
   function handleStart() {
-    if (!selectedProjektId) return;
+  if (!selectedProjektId) return;
 
-    setState((s) => {
-      startTimer(s, {
-        mitarbeiterId: String(mitarbeiterId),
-        projektId: String(selectedProjektId),
-        bereich: selectedBereich,
-        datum: String(selectedIso),
-      });
-      return s;
+  setState((s) => {
+    startTimer(s, {
+      mitarbeiterId: String(mitarbeiterId),
+      mitarbeiterName: String(mitarbeiterName), // ✅ Name zum Buchungszeitpunkt
+      projektId: String(selectedProjektId),      // ✅ richtige Variable
+      bereich: selectedBereich,                  // ✅ richtige Variable
+      datum: String(selectedIso),                // ✅ der ausgewählte Tag (Mo–Sa in der Woche)
     });
-  }
+
+    return s;
+  });
+}
+
 
   function handleStop() {
     setState((s) => {

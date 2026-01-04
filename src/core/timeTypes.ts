@@ -23,12 +23,14 @@ export type ArbeitBuchung = {
   id: string;
   art: "arbeit";
   mitarbeiterId: string;
+  mitarbeiterName?: string; // ✅ neu
   projektId: string;
   datum: string; // YYYY-MM-DD
   minuten: number;
   bereich: Bereich;
   note?: string;
 };
+
 
 export type StatusArt = "urlaub" | "krank" | "ueberstundenabbau";
 

@@ -12,12 +12,15 @@ export type Arbeitsart = "maschine" | "bank" | "lack" | "montage";
 
 export type RunningTimer = {
   mitarbeiterId: string;
+  mitarbeiterName?: string; // ✅ neu: Name zum Zeitpunkt des Starts
   projektId: string;
   bereich: Bereich;
   startTs: number;
   datum: string; // ✅ wichtig: Board-Fokus + Nachtragen
   note?: string;
 };
+
+
 
 export type BoardLayoutPos = { rowId: string; startCol: number };
 
@@ -247,13 +250,16 @@ export function loadTimeState(): State {
     let running: RunningTimer | null = (parsed?.running as any) ?? null;
     if (running) {
       const fixed: RunningTimer = {
-        mitarbeiterId: str((running as any).mitarbeiterId),
-        projektId: str((running as any).projektId),
-        bereich: (running as any).bereich as Bereich,
-        startTs: num((running as any).startTs) || Date.now(),
-        datum: str(normalizeIsoDatum((running as any).datum) || todayIso(), todayIso()),
-        note: (running as any).note != null ? str((running as any).note) : undefined,
-      };
+  mitarbeiterId: str((running as any).mitarbeiterId),
+  mitarbeiterName: (running as any).mitarbeiterName != null ? str((running as any).mitarbeiterName) : undefined,
+  projektId: str((running as any).projektId),
+  bereich: (running as any).bereich as Bereich,
+  startTs: num((running as any).startTs) || Date.now(),
+  datum: str((running as any).datum, todayIso()),
+  note: (running as any).note != null ? str((running as any).note) : undefined,
+};
+
+
 
       if (!fixed.mitarbeiterId || !fixed.projektId || !fixed.bereich) running = null;
       else running = fixed;
@@ -326,18 +332,23 @@ export function ensureOneStatusPerDay(b: Buchung[], mitarbeiterId: string, datum
 
 export function startTimer(
   s: State,
-  args: { mitarbeiterId: string; projektId: string; bereich: Bereich; datum: string; note?: string }
+  args: { mitarbeiterId: string; mitarbeiterName?: string; projektId: string; bereich: Bereich; datum: string; note?: string }
 ) {
+
+
   const fixedDatum = normalizeIsoDatum(args.datum) || todayIso();
 
-  s.running = {
-    mitarbeiterId: str(args.mitarbeiterId),
-    projektId: str(args.projektId),
-    bereich: args.bereich,
-    datum: fixedDatum,
-    startTs: Date.now(),
-    note: args.note != null ? str(args.note) : undefined,
-  };
+ s.running = {
+  mitarbeiterId: str(args.mitarbeiterId),
+  mitarbeiterName: args.mitarbeiterName != null ? str(args.mitarbeiterName) : undefined,
+  projektId: str(args.projektId),
+  bereich: args.bereich,
+  datum: str(args.datum, todayIso()),
+  startTs: Date.now(),
+  note: args.note != null ? str(args.note) : undefined,
+};
+
+
   saveState(s);
 }
 
@@ -351,17 +362,20 @@ export function stopTimer(s: State, datumOverride?: string) {
   const datum = normalizeIsoDatum(datumOverride) || todayIso();
 
   s.buchungen.push({
-    id: uid(),
-    mitarbeiterId: s.running.mitarbeiterId,
-    datum,
-    art: "arbeit",
-    projektId: s.running.projektId,
-    bereich: s.running.bereich,
-    startTs: s.running.startTs,
-    endeTs: endTs,
-    minuten: minutes,
-    note: s.running.note,
-  } as any);
+  id: uid(),
+  mitarbeiterId: s.running.mitarbeiterId,
+  mitarbeiterName: s.running.mitarbeiterName, // ✅ neu: Name zum Zeitpunkt der Buchung
+  datum,
+  art: "arbeit",
+  projektId: s.running.projektId,
+  bereich: s.running.bereich,
+  startTs: s.running.startTs,
+  endeTs: endTs,
+  minuten: minutes,
+  note: s.running.note,
+} as any);
+
+
 
   s.running = null;
   saveState(s);
