@@ -240,6 +240,30 @@ export default function Archiv(p: Props) {
                               <div>Montage</div>
                               <div>Summe</div>
                             </div>
+                            {(() => {
+  const sum = entries.reduce(
+    (acc, e) => {
+      acc.maschine += e.mins.maschine || 0;
+      acc.bank += e.mins.bank || 0;
+      acc.lack += e.mins.lack || 0;
+      acc.montage += e.mins.montage || 0;
+      acc.total += e.sumMin || 0;
+      return acc;
+    },
+    { maschine: 0, bank: 0, lack: 0, montage: 0, total: 0 }
+  );
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm font-semibold tabular-nums">
+      <div>Summe</div>
+      <div>{minutesToHours(sum.maschine)} h</div>
+      <div>{minutesToHours(sum.bank)} h</div>
+      <div>{minutesToHours(sum.lack)} h</div>
+      <div>{minutesToHours(sum.montage)} h</div>
+      <div>{minutesToHours(sum.total)} h</div>
+    </div>
+  );
+})()}
 
                             {entries.map((e) => (
                               <div

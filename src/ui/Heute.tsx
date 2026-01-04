@@ -30,7 +30,6 @@ type Props = {
   clearActiveBooking: () => void;
 };
 
-
 type DayChoice = { label: string; iso: string };
 
 // ===== UTC-kalenderfeste Date-Helpers (DST + Schaltjahr sicher) =====
@@ -177,21 +176,20 @@ export default function Heute({
   );
 
   function handleStart() {
-  if (!selectedProjektId) return;
+    if (!selectedProjektId) return;
 
-  setState((s) => {
-    startTimer(s, {
-      mitarbeiterId: String(mitarbeiterId),
-      mitarbeiterName: String(mitarbeiterName), // ✅ Name zum Buchungszeitpunkt
-      projektId: String(selectedProjektId),      // ✅ richtige Variable
-      bereich: selectedBereich,                  // ✅ richtige Variable
-      datum: String(selectedIso),                // ✅ der ausgewählte Tag (Mo–Sa in der Woche)
+    setState((s) => {
+      startTimer(s, {
+        mitarbeiterId: String(mitarbeiterId),
+        mitarbeiterName: String(mitarbeiterName), // ✅ Name zum Buchungszeitpunkt
+        projektId: String(selectedProjektId), // ✅ richtige Variable
+        bereich: selectedBereich, // ✅ richtige Variable
+        datum: String(selectedIso), // ✅ der ausgewählte Tag (Mo–Sa in der Woche)
+      });
+
+      return s;
     });
-
-    return s;
-  });
-}
-
+  }
 
   function handleStop() {
     setState((s) => {
@@ -234,10 +232,7 @@ export default function Heute({
     });
   }
 
-  const projects = (state.projects ?? []).filter(
-  (p: any) => p?.active !== false && p?.status !== "archiv"
-);
-
+  const projects = (state.projects ?? []).filter((p: any) => p?.active !== false && p?.status !== "archiv");
 
   return (
     <div className="flex flex-col gap-3">
@@ -287,13 +282,61 @@ export default function Heute({
           <button className={btn} onClick={() => setWeekOffset(0)}>
             Heute
           </button>
-
-          <div className="text-xs text-neutral-500 ml-2">Ausgewählt: {selectedIso}</div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          {/* Timer (Primary) */}
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4 md:order-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-neutral-100">Timer</div>
+              <div className={isRunningForUser ? "text-xs text-orange-300" : "text-xs text-neutral-500"}>
+                {isRunningForUser ? "Läuft" : "Nicht aktiv"}
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                className="rounded-2xl border border-orange-500 bg-orange-500 px-4 py-3 text-base font-semibold text-neutral-950"
+                onClick={handleStart}
+                disabled={!selectedProjektId}
+                title={!selectedProjektId ? "Bitte Projekt wählen" : "Timer starten"}
+              >
+                Start
+              </button>
+
+              <button
+                className={
+                  isRunningForUser
+                    ? "rounded-2xl border border-red-700 bg-neutral-900 px-4 py-3 text-base font-semibold text-red-100 hover:border-red-500"
+                    : "rounded-2xl border border-neutral-800 bg-neutral-950 px-4 py-3 text-base font-semibold text-neutral-600"
+                }
+                onClick={handleStop}
+                disabled={!isRunningForUser}
+                title={!isRunningForUser ? "Kein laufender Timer" : "Timer stoppen"}
+              >
+                Stop
+              </button>
+            </div>
+
+            <div className="mt-3 text-xs text-neutral-500">
+              Laufend:{" "}
+              <span className="text-neutral-200">
+                {isRunningForUser ? `${laufendeProjektId || "Projekt"} (${String(state.running?.bereich)})` : "—"}
+              </span>
+            </div>
+
+            <div className="mt-3 rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+              <div className="text-xs text-neutral-500">Tageswerte</div>
+              <div className="mt-1 text-sm text-neutral-200 tabular-nums">
+                Soll: <span className="text-neutral-100">{minutesToHoursString(daySollMin)}</span>{" "}
+                <span className="text-neutral-600">·</span>{" "}
+                Ist: <span className="text-neutral-100">{minutesToHoursString(daySummary.arbeitMinuten)}</span>
+              </div>
+            </div>
+          </div>
+
           {/* Tag (Mo–Sa) */}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 md:order-1">
             <div className="text-xs text-neutral-400">Tag (in KW {weekLabel.kw})</div>
             <div className="flex flex-wrap gap-2">
               {dayChoices.map((d) => (
@@ -307,12 +350,12 @@ export default function Heute({
               ))}
             </div>
             <div className="text-xs text-neutral-500">
-              Soll: {minutesToHoursString(daySollMin)} · Ist: {minutesToHoursString(daySummary.arbeitMinuten)}
+              Ausgewählt: <span className="text-neutral-200">{selectedIso}</span>
             </div>
           </div>
 
-          {/* Projekt */}
-          <div className="flex flex-col gap-2">
+          {/* Projekt + Bereich */}
+          <div className="flex flex-col gap-2 md:order-3">
             <div className="text-xs text-neutral-400">Projekt</div>
             <select
               className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100"
@@ -327,7 +370,7 @@ export default function Heute({
               ))}
             </select>
 
-            <div className="text-xs text-neutral-400">Bereich</div>
+            <div className="mt-1 text-xs text-neutral-400">Bereich</div>
             <div className="flex flex-wrap gap-2">
               {(["maschine", "bank", "lack", "montage"] as Bereich[]).map((b) => (
                 <button
@@ -338,23 +381,6 @@ export default function Heute({
                   {b}
                 </button>
               ))}
-            </div>
-          </div>
-
-          {/* Start/Stop */}
-          <div className="flex flex-col gap-2">
-            <div className="text-xs text-neutral-400">Timer</div>
-            <div className="flex flex-wrap gap-2">
-              <button className={btnActive} onClick={handleStart}>
-                Start
-              </button>
-              <button className={isRunningForUser ? btnDanger : btn} onClick={handleStop} disabled={!isRunningForUser}>
-                Stop
-              </button>
-            </div>
-
-            <div className="text-xs text-neutral-500">
-              Laufend: {isRunningForUser ? `${laufendeProjektId || "Projekt"} (${String(state.running?.bereich)})` : "—"}
             </div>
           </div>
         </div>
