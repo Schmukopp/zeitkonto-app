@@ -248,8 +248,9 @@ export default function Archiv(p: Props) {
             className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-sm tabular-nums"
           >
             <div className="truncate">
-  {e.mid}
+  {mitarbeiterNameById.get(e.mid) ?? e.mid}
 </div>
+
 
 
             <div>{minutesToHours(e.mins.maschine)} h</div>
