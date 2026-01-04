@@ -222,22 +222,13 @@ export default function AdminMitarbeiter(p: Props) {
         title="Farbe wählen"
       />
 
-      <input
-        className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-        value={String((sel as any).farbe ?? "")}
-        onChange={(e) => {
-          const v = e.target.value;
-          p.setMs((s) => {
-            const cur = s.mitarbeiter.find((mm) => mm.id === s.selectedId);
-            if (!cur) return s;
-            return upsertMitarbeiter(s, { ...(cur as any), farbe: v });
-          });
-        }}
-        placeholder="#RRGGBB"
-      />
+      <div className="text-xs text-neutral-400">
+        Farbe wird im Board & Pool verwendet (über Verantwortlicher Meister).
+      </div>
     </div>
   </div>
 ) : null}
+
 
               <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="text-sm font-semibold">Arbeitszeitmodell (Mo–Fr)</div>
