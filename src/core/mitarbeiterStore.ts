@@ -2,13 +2,21 @@
 import type { WochenModell } from "./workModel";
 import { DEFAULT_WOCHENMODELL } from "./workModel";
 
+export type MitarbeiterRolle = "meister" | "geselle" | "azubi";
+
 export type Mitarbeiter = {
   id: string;
   name: string;
   geburtsdatum: string; // YYYY-MM-DD
   modell: WochenModell;
 
+  rolle: MitarbeiterRolle;
+
+  // Meister-Farbe (Hex), z.B. "#3b82f6"
+  farbe?: string;
+
   urlaubstageGesamt: number;
+
   urlaubstageVerbraucht: number;
 
   // Überstundenkonto (Stunden)
@@ -23,6 +31,11 @@ export type MitarbeiterState = {
 const LS_KEY = "zeitkonto.mitarbeiter.v1";
 const LS_BAK = `${LS_KEY}.bak`;
 
+function newMitarbeiterId() {
+  // robust gegen gleiche Millisekunde / schnelle Klicks
+  const rnd = Math.random().toString(16).slice(2, 8);
+  return `m${Date.now().toString(16)}-${rnd}`;
+}
 
 function clamp(n: number, min: number, max: number) {
   if (!Number.isFinite(n)) return min;
@@ -30,7 +43,6 @@ function clamp(n: number, min: number, max: number) {
 }
 
 function cloneWochenModell(m: WochenModell): WochenModell {
-  // defensive deep clone (klein und explizit)
   return {
     tage: {
       mo: { sollMinuten: m.tage.mo.sollMinuten, urlaubswert: m.tage.mo.urlaubswert },
@@ -43,26 +55,34 @@ function cloneWochenModell(m: WochenModell): WochenModell {
 }
 
 function normalizeGeburtsdatum(v: unknown): string {
-  // Admin Freeze Step 1:
-  // Leer bleibt leer. Default-Datum wird ausschließlich im Seed gesetzt.
   const s = (typeof v === "string" ? v : "").trim();
   return s;
 }
 
+function normalizeRolle(v: unknown): MitarbeiterRolle {
+  if (v === "meister" || v === "geselle" || v === "azubi") return v;
+  return "geselle"; // ✅ Default für Altbestand
+}
+function normalizeFarbe(v: unknown): string | undefined {
+  const s = (typeof v === "string" ? v : "").trim();
+  if (!s) return undefined;
+  if (/^#[0-9a-fA-F]{3}$/.test(s) || /^#[0-9a-fA-F]{6}$/.test(s)) return s;
+  return undefined;
+}
 
 function normalizeMitarbeiter(raw: any): Mitarbeiter {
-  const id = (typeof raw?.id === "string" && raw.id.trim()) ? raw.id.trim() : `m${Date.now().toString(16)}`;
+  const id = (typeof raw?.id === "string" && raw.id.trim()) ? raw.id.trim() : newMitarbeiterId();
+
   const name = (typeof raw?.name === "string" ? raw.name : "").trim() || "Ohne Name";
 
   const urlaubGesamt = clamp(Number(raw?.urlaubstageGesamt) || 0, 0, 999);
-  const urlaubVerb = clamp(Number(raw?.urlaubstageVerbraucht) || 0, 0, urlaubGesamt); // <= gesamt
+  const urlaubVerb = clamp(Number(raw?.urlaubstageVerbraucht) || 0, 0, urlaubGesamt);
 
   const ueber = Number(raw?.ueberstundenSaldo);
   const ueberFix = Number.isFinite(ueber) ? clamp(ueber, -9999, 9999) : 0;
 
   const srcModell = raw?.modell?.tage ? raw.modell : DEFAULT_WOCHENMODELL;
 
-  // modell defensiv lesen + clamp
   const modell: WochenModell = {
     tage: {
       mo: {
@@ -88,11 +108,13 @@ function normalizeMitarbeiter(raw: any): Mitarbeiter {
     },
   };
 
-  return {
+    return {
     id,
     name,
     geburtsdatum: normalizeGeburtsdatum(raw?.geburtsdatum),
     modell,
+    rolle: normalizeRolle(raw?.rolle),
+    farbe: normalizeFarbe(raw?.farbe),
     urlaubstageGesamt: urlaubGesamt,
     urlaubstageVerbraucht: urlaubVerb,
     ueberstundenSaldo: ueberFix,
@@ -103,44 +125,26 @@ function normalizeState(raw: any): MitarbeiterState {
   const listRaw = Array.isArray(raw?.mitarbeiter) ? raw.mitarbeiter : [];
   const list = listRaw.map(normalizeMitarbeiter);
 
-  // selectedId nur akzeptieren, wenn vorhanden
   const selRaw = typeof raw?.selectedId === "string" ? raw.selectedId : null;
-  const selOk = selRaw && list.some((m) => m.id === selRaw) ? selRaw : (list[0]?.id ?? null);
+  const selOk = selRaw && list.some((m) => m.id === selRaw) ? selRaw : list[0]?.id ?? null;
 
-  // Demo-Fall erkennen:
-  // - komplett leer ODER
-  // - exakt 1 Eintrag, der wie der Default-Seed wirkt (m1 / Mitarbeiter)
-  const isDefaultOnly =
-    list.length === 1 &&
-    list[0]?.id === "m1" &&
-    (list[0]?.name ?? "").trim() === "Mitarbeiter";
-
-  // Wenn leer ODER nur Default: 10 Demo-Mitarbeiter erzeugen
-  if (list.length === 0 || isDefaultOnly) {
-    const demo: Mitarbeiter[] = [];
-    for (let i = 1; i <= 10; i++) {
-      const id = `m${i}`;
-      const name = i === 1 ? "Mitarbeiter" : `Mitarbeiter ${i}`;
-      demo.push(defaultMitarbeiter(id, name));
-    }
-
-    // selectedId: wenn raw was Sinnvolles liefert, nutzen; sonst m1
-    const demoSelRaw = typeof raw?.selectedId === "string" ? raw.selectedId : null;
-    const demoSelOk = demoSelRaw && demo.some((m) => m.id === demoSelRaw) ? demoSelRaw : "m1";
-
-    return { selectedId: demoSelOk, mitarbeiter: demo };
+  if (list.length === 0) {
+    const seed = defaultMitarbeiter("m1", "Mitarbeiter");
+    return { selectedId: seed.id, mitarbeiter: [seed] };
   }
 
   return { selectedId: selOk, mitarbeiter: list };
 }
-
 
 export function defaultMitarbeiter(id = "m1", name = "Mitarbeiter"): Mitarbeiter {
   return {
     id,
     name,
     geburtsdatum: "1990-01-01",
+    rolle: "geselle",
+    farbe: undefined,
     modell: cloneWochenModell(DEFAULT_WOCHENMODELL),
+
     urlaubstageGesamt: 30,
     urlaubstageVerbraucht: 0,
     ueberstundenSaldo: 0,
@@ -148,47 +152,30 @@ export function defaultMitarbeiter(id = "m1", name = "Mitarbeiter"): Mitarbeiter
 }
 
 export function loadMitarbeiterState(): MitarbeiterState {
-  const seedState = () => {
-    const seed = defaultMitarbeiter("m1", "Mitarbeiter");
-    return { selectedId: seed.id, mitarbeiter: [seed] };
-  };
-
   const raw = localStorage.getItem(LS_KEY);
   const rawBak = localStorage.getItem(LS_BAK);
 
-  // 1) Hauptkey probieren
   if (raw && raw.trim()) {
     try {
-      const parsed = JSON.parse(raw);
-      return normalizeState(parsed);
-    } catch {
-      // kaputt -> Backup versuchen
-    }
+      return normalizeState(JSON.parse(raw));
+    } catch {}
   }
 
-  // 2) Backup probieren + automatisch wiederherstellen
   if (rawBak && rawBak.trim()) {
     try {
-      const parsedBak = JSON.parse(rawBak);
-      // Restore: Backup wird wieder zum Hauptkey
       localStorage.setItem(LS_KEY, rawBak);
-      return normalizeState(parsedBak);
-    } catch {
-      // Backup auch kaputt -> Seed
-    }
+      return normalizeState(JSON.parse(rawBak));
+    } catch {}
   }
 
-  // 3) Seed (aber NICHT automatisch speichern!)
-  return seedState();
+  const seed = defaultMitarbeiter("m1", "Mitarbeiter");
+  return { selectedId: seed.id, mitarbeiter: [seed] };
 }
 
-
 export function saveMitarbeiterState(s: MitarbeiterState) {
-  // Backup der vorherigen Version (falls vorhanden)
   localStorage.setItem(LS_BAK, localStorage.getItem(LS_KEY) || "");
   localStorage.setItem(LS_KEY, JSON.stringify(s));
 }
-
 
 export function getSelected(s: MitarbeiterState): Mitarbeiter | null {
   if (!s.selectedId) return null;
@@ -196,7 +183,7 @@ export function getSelected(s: MitarbeiterState): Mitarbeiter | null {
 }
 
 export function selectMitarbeiter(s: MitarbeiterState, id: string | null): MitarbeiterState {
-  const ok = id && s.mitarbeiter.some((m) => m.id === id) ? id : (s.mitarbeiter[0]?.id ?? null);
+  const ok = id && s.mitarbeiter.some((m) => m.id === id) ? id : s.mitarbeiter[0]?.id ?? null;
   return { ...s, selectedId: ok };
 }
 
@@ -209,22 +196,24 @@ export function upsertMitarbeiter(s: MitarbeiterState, patch: Mitarbeiter): Mita
   const fixed = normalizeMitarbeiter(patch);
 
   const idx = s.mitarbeiter.findIndex((m) => m.id === fixed.id);
-  const nextList = idx >= 0 ? s.mitarbeiter.map((m) => (m.id === fixed.id ? fixed : m)) : [...s.mitarbeiter, fixed];
+  const nextList =
+    idx >= 0 ? s.mitarbeiter.map((m) => (m.id === fixed.id ? fixed : m)) : [...s.mitarbeiter, fixed];
 
   const nextSelected = s.selectedId ?? fixed.id;
-  const selectedOk = nextList.some((m) => m.id === nextSelected) ? nextSelected : (nextList[0]?.id ?? null);
+  const selectedOk = nextList.some((m) => m.id === nextSelected) ? nextSelected : nextList[0]?.id ?? null;
 
   return { selectedId: selectedOk, mitarbeiter: nextList };
 }
 
 export function createMitarbeiter(s: MitarbeiterState): MitarbeiterState {
-  const id = `m${Date.now().toString(16)}`;
+  const id = newMitarbeiterId();
+
   const neu = defaultMitarbeiter(id, "Neuer Mitarbeiter");
   return { selectedId: neu.id, mitarbeiter: [...s.mitarbeiter, neu] };
 }
 
 export function deleteMitarbeiter(s: MitarbeiterState, id: string): MitarbeiterState {
   const next = s.mitarbeiter.filter((m) => m.id !== id);
-  const nextSelected = s.selectedId === id ? (next[0]?.id ?? null) : s.selectedId;
+  const nextSelected = s.selectedId === id ? next[0]?.id ?? null : s.selectedId;
   return { selectedId: nextSelected, mitarbeiter: next };
 }

@@ -17,8 +17,6 @@ type Props = {
 
 const L: Record<WochenTag, string> = { mo: "Mo", di: "Di", mi: "Mi", do: "Do", fr: "Fr" };
 
-// Robust: beim ersten Klick verhindern wir, dass der Browser den Cursor setzt,
-// und markieren stattdessen den kompletten Inhalt. Ergebnis: "0" wird zu "5" statt "05".
 function selectAllOnFirstClick(e: React.MouseEvent<HTMLInputElement>) {
   const el = e.currentTarget;
   if (document.activeElement !== el) {
@@ -28,9 +26,15 @@ function selectAllOnFirstClick(e: React.MouseEvent<HTMLInputElement>) {
   }
 }
 
-// Tastatur-Fokus (Tab) ebenfalls markieren
 function selectAllOnFocus(e: React.FocusEvent<HTMLInputElement>) {
   e.currentTarget.select();
+}
+
+function fmtRolle(v: any): string {
+  if (v === "meister") return "Meister";
+  if (v === "geselle") return "Geselle";
+  if (v === "azubi") return "Azubi";
+  return "Geselle";
 }
 
 export default function AdminMitarbeiter(p: Props) {
@@ -43,7 +47,8 @@ export default function AdminMitarbeiter(p: Props) {
           <div className="text-lg font-semibold">Admin · Mitarbeiter</div>
           <div className="text-sm text-neutral-400">Stammdaten, Arbeitszeitmodell, Urlaub, Überstunden</div>
         </div>
-                      <div className="flex gap-2">
+
+        <div className="flex gap-2">
           <button
             className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-orange-500"
             onClick={() => p.setMs((s) => createMitarbeiter(s))}
@@ -55,12 +60,9 @@ export default function AdminMitarbeiter(p: Props) {
             <button
               className="rounded-xl border border-orange-500 bg-neutral-950 px-3 py-2 text-sm text-orange-300 hover:bg-orange-500 hover:text-neutral-950"
               onClick={() => {
-                // Schutz: nicht versehentlich den letzten Mitarbeiter löschen
                 if (p.ms.mitarbeiter.length <= 1) return;
-
                 const ok = window.confirm(`Mitarbeiter "${sel.name}" wirklich löschen?`);
                 if (!ok) return;
-
                 p.setMs((s) => deleteMitarbeiter(s, sel.id));
               }}
               disabled={p.ms.mitarbeiter.length <= 1}
@@ -70,8 +72,6 @@ export default function AdminMitarbeiter(p: Props) {
             </button>
           )}
         </div>
-
-
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -89,7 +89,10 @@ export default function AdminMitarbeiter(p: Props) {
                 }
                 onClick={() => p.setMs((s) => selectMitarbeiter(s, m.id))}
               >
-                <div className="font-medium">{m.name}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium truncate">{m.name}</div>
+                  <div className="text-xs text-neutral-400">{fmtRolle((m as any).rolle)}</div>
+                </div>
                 <div className="text-xs text-neutral-400">{m.id}</div>
               </button>
             ))}
@@ -109,6 +112,27 @@ export default function AdminMitarbeiter(p: Props) {
                     value={sel.name}
                     onChange={(e) => p.setMs((s) => upsertMitarbeiter(s, { ...sel, name: e.target.value }))}
                   />
+                </div>
+
+                {/* Rolle */}
+                <div>
+                  <div className="mb-1 text-xs text-neutral-400">Rolle</div>
+                  <select
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                    value={(sel as any).rolle ?? "geselle"}
+                    onChange={(e) => {
+                      const v = e.target.value as any;
+                      p.setMs((s) => {
+                        const cur = s.mitarbeiter.find((mm) => mm.id === s.selectedId);
+                        if (!cur) return s;
+                        return upsertMitarbeiter(s, { ...cur, rolle: v });
+                      });
+                    }}
+                  >
+                    <option value="meister">Meister</option>
+                    <option value="geselle">Geselle</option>
+                    <option value="azubi">Azubi</option>
+                  </select>
                 </div>
 
                 <div>
@@ -177,6 +201,43 @@ export default function AdminMitarbeiter(p: Props) {
                   />
                 </div>
               </div>
+{/* Meister-Farbe (nur wenn Rolle=Meister) */}
+{String((sel as any).rolle) === "meister" ? (
+  <div>
+    <div className="mb-1 text-xs text-neutral-400">Meister-Farbe</div>
+
+    <div className="flex items-center gap-2">
+      <input
+        type="color"
+        value={String((sel as any).farbe ?? "#3b82f6")}
+        onChange={(e) => {
+          const v = e.target.value;
+          p.setMs((s) => {
+            const cur = s.mitarbeiter.find((mm) => mm.id === s.selectedId);
+            if (!cur) return s;
+            return upsertMitarbeiter(s, { ...(cur as any), farbe: v });
+          });
+        }}
+        className="h-9 w-12 rounded-xl border border-neutral-700 bg-neutral-950"
+        title="Farbe wählen"
+      />
+
+      <input
+        className="flex-1 rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+        value={String((sel as any).farbe ?? "")}
+        onChange={(e) => {
+          const v = e.target.value;
+          p.setMs((s) => {
+            const cur = s.mitarbeiter.find((mm) => mm.id === s.selectedId);
+            if (!cur) return s;
+            return upsertMitarbeiter(s, { ...(cur as any), farbe: v });
+          });
+        }}
+        placeholder="#RRGGBB"
+      />
+    </div>
+  </div>
+) : null}
 
               <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
                 <div className="text-sm font-semibold">Arbeitszeitmodell (Mo–Fr)</div>
@@ -187,35 +248,32 @@ export default function AdminMitarbeiter(p: Props) {
 
                       <div className="mt-2 text-xs text-neutral-400">SOLL (Stunden)</div>
                       <input
-  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-  type="number"
-  min={0}
-  max={12}
-  step="0.25"
-  value={Number((sel.modell.tage[t].sollMinuten / 60).toFixed(2))}
-  onMouseDown={selectAllOnFirstClick}
-  onFocus={selectAllOnFocus}
-  onChange={(e) => {
-    const hours = Number(e.target.value) || 0;
-    const minutes = Math.round(hours * 60);
+                        className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                        type="number"
+                        min={0}
+                        max={12}
+                        step="0.25"
+                        value={Number((sel.modell.tage[t].sollMinuten / 60).toFixed(2))}
+                        onMouseDown={selectAllOnFirstClick}
+                        onFocus={selectAllOnFocus}
+                        onChange={(e) => {
+                          const hours = Number(e.target.value) || 0;
+                          const minutes = Math.round(hours * 60);
 
-    p.setMs((s) =>
-      upsertMitarbeiter(s, {
-        ...sel,
-        modell: {
-          tage: {
-            ...sel.modell.tage,
-            [t]: { ...sel.modell.tage[t], sollMinuten: minutes },
-          },
-        },
-      })
-    );
-  }}
-/>
-<div className="mt-1 text-xs text-neutral-500">
-  = {sel.modell.tage[t].sollMinuten} min
-</div>
-
+                          p.setMs((s) =>
+                            upsertMitarbeiter(s, {
+                              ...sel,
+                              modell: {
+                                tage: {
+                                  ...sel.modell.tage,
+                                  [t]: { ...sel.modell.tage[t], sollMinuten: minutes },
+                                },
+                              },
+                            })
+                          );
+                        }}
+                      />
+                      <div className="mt-1 text-xs text-neutral-500">= {sel.modell.tage[t].sollMinuten} min</div>
 
                       <div className="mt-2 text-xs text-neutral-400">Urlaubswert (0..1)</div>
                       <input
@@ -232,7 +290,9 @@ export default function AdminMitarbeiter(p: Props) {
                           p.setMs((s) =>
                             upsertMitarbeiter(s, {
                               ...sel,
-                              modell: { tage: { ...sel.modell.tage, [t]: { ...sel.modell.tage[t], urlaubswert: v } } },
+                              modell: {
+                                tage: { ...sel.modell.tage, [t]: { ...sel.modell.tage[t], urlaubswert: v } },
+                              },
                             })
                           );
                         }}

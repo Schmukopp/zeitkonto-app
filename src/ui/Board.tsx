@@ -109,6 +109,15 @@ function weekEndDisplayMoSaCapped(weekStartMonday: Date): Date {
   const dec31 = new Date(Date.UTC(year, 11, 31, 0, 0, 0, 0));
   return end.getTime() > dec31.getTime() ? dec31 : end;
 }
+function hexToRgba(hex: string, alpha: number) {
+  const h = String(hex || "").replace("#", "").trim();
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -359,8 +368,36 @@ export default function Board({
   setActiveBookingProjektId: _setActiveBookingProjektId,
 }: Props) {
   const mitarbeiter = (ms as any)?.mitarbeiter ?? [];
+  const meisterFarbeById = useMemo(() => {
+  const map = new Map<string, string>();
+  for (const m of (mitarbeiter as any[])) {
+    if (String((m as any).rolle) === "meister") {
+      const f = String((m as any).farbe ?? "").trim();
+      if (f) map.set(String(m.id), f);
+    }
+  }
+  return map;
+}, [mitarbeiter]);
+
+function getMeisterFarbe(meisterId: string): string | null {
+  const f = meisterFarbeById.get(String(meisterId));
+  return f ? f : null;
+}
+
+  const selectedMitarbeiter = (mitarbeiter as any[]).find((m) => String(m.id) === String((ms as any)?.selectedId));
+const selectedRolle = String((selectedMitarbeiter as any)?.rolle ?? "geselle");
+const canPlan = selectedRolle === "meister";
+const plannerMeisterId = canPlan ? String((selectedMitarbeiter as any)?.id) : "";
+
   const projects = (state as any)?.projects ?? [];
   const running = (state as any)?.running ?? null;
+
+  const meister = useMemo(() => {
+  return (mitarbeiter ?? []).filter((m: any) => String((m as any)?.rolle ?? "geselle") === "meister");
+}, [mitarbeiter]);
+
+const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) === String(rowId));
+
 
   const { topWeeks, bottomWeeks } = useMemo(() => {
     const now = new Date();
@@ -1017,11 +1054,34 @@ export default function Board({
               return (
                 <div key={rowId} className="flex border-b border-neutral-800 last:border-b-0">
                   <div
-                    className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-[13px] text-neutral-200 bg-neutral-900/60"
-                    style={{ width: NAME_COL_W, height: rowH }}
-                  >
-                    <div className="truncate font-medium">{m.name}</div>
-                  </div>
+  className="shrink-0 border-r border-neutral-800 px-2 flex items-center text-[13px] text-neutral-200"
+  style={{
+    width: NAME_COL_W,
+    height: rowH,
+    background:
+      String((m as any).rolle) === "meister" && getMeisterFarbe(String(m.id))
+        ? hexToRgba(getMeisterFarbe(String(m.id)) as string, 0.18)
+        : "rgba(23,23,23,0.6)",
+  }}
+>
+
+  <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center gap-2 min-w-0">
+  {String((m as any).rolle) === "meister" && getMeisterFarbe(String(m.id)) ? (
+    <div className="h-3 w-3 rounded-sm" style={{ background: getMeisterFarbe(String(m.id)) as string }} />
+  ) : null}
+  <div className="truncate font-medium">{m.name}</div>
+</div>
+
+
+    {String((m as any).rolle) === "azubi" ? (
+      <span className="rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[10px] text-neutral-300">
+        Azubi
+      </span>
+    ) : null}
+  </div>
+</div>
+
 
                   <div
                     className={`relative ${draggingId && hoverRowId === String(rowId) ? "ring-2 ring-orange-500/70" : ""}`}
@@ -1061,7 +1121,12 @@ export default function Board({
                       return (
                         <div
                           key={seg.key}
-                          className="absolute z-10 rounded-md border border-neutral-800 overflow-hidden"
+                          className={`absolute z-10 rounded-md overflow-hidden border ${
+  String((m as any).rolle) === "azubi"
+    ? "border-dashed border-neutral-400"
+    : "border-neutral-800"
+}`}
+
                           style={{
                             top: topPx,
                             left: leftPx,
