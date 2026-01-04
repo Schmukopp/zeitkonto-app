@@ -27,11 +27,72 @@ function fmtMoney(n?: number): string {
   return x.toFixed(2);
 }
 
+import type { MitarbeiterState } from "../core/mitarbeiterStore";
+
 type Props = {
   state: State;
+  ms: MitarbeiterState;
 };
 
+type BereichKey = "maschine" | "bank" | "lack" | "montage";
+
+type IstByMitarbeiter = Record<string, Record<BereichKey, number>>; // mitarbeiterId -> bereich -> minuten
+
+function isBereichKey(v: any): v is BereichKey {
+  return v === "maschine" || v === "bank" || v === "lack" || v === "montage";
+}
+
+/**
+ * Aggregiert Arbeitsbuchungen für genau ein Projekt:
+ * Ergebnis: mitarbeiterId -> bereich -> minuten
+ */
+function calcIstMinByProjekt(state: State, projektId: string): IstByMitarbeiter {
+  const out: IstByMitarbeiter = {};
+
+  for (const b of state.buchungen ?? []) {
+    if (!b || (b as any).art !== "arbeit") continue;
+
+    const pid = String((b as any).projektId ?? "");
+    if (!pid || pid !== String(projektId)) continue;
+
+    const mid = String((b as any).mitarbeiterId ?? "");
+    if (!mid) continue;
+
+    const bereichRaw = (b as any).bereich;
+    if (!isBereichKey(bereichRaw)) continue;
+
+    const mins = Number((b as any).minuten) || 0;
+    if (mins <= 0) continue;
+
+    if (!out[mid]) {
+      out[mid] = { maschine: 0, bank: 0, lack: 0, montage: 0 };
+    }
+    out[mid][bereichRaw] += mins;
+  }
+
+  return out;
+}
+
+function sumBereiche(mins: Record<BereichKey, number>): number {
+  return (mins.maschine || 0) + (mins.bank || 0) + (mins.lack || 0) + (mins.montage || 0);
+}
+
 export default function Archiv(p: Props) {
+    const mitarbeiterNameById = useMemo(() => {
+    const list = (p.ms as any)?.mitarbeiter ?? [];
+    const m = new Map<string, string>();
+    if (Array.isArray(list)) {
+      for (const x of list) {
+        if (!x) continue;
+        const id = String((x as any).id ?? "");
+        if (!id) continue;
+        const name = String((x as any).name ?? id);
+        m.set(id, name);
+      }
+    }
+    return m;
+  }, [p.ms]);
+  
   const archived = useMemo(() => {
     const list = (p.state.projects ?? []).filter((pr: any) => pr?.status === "archiv");
     // Gruppieren nach archivJahr (Fallback: aus archiviertAt oder abschluss)
@@ -146,7 +207,65 @@ export default function Archiv(p: Props) {
                     <div className="mt-2 text-xs text-neutral-500">
                       Zugeordnet (operativ): <span className="text-neutral-300">{fmtName(proj?.zugeordnetAnId ?? "—")}</span>
                     </div>
+                    {(() => {
+  const byMitarbeiter = calcIstMinByProjekt(p.state, String(proj.id));
+  const entries = Object.entries(byMitarbeiter).map(([mid, mins]) => ({
+    mid,
+    mins,
+    sumMin: sumBereiche(mins),
+  }));
+
+  entries.sort((a, b) => b.sumMin - a.sumMin);
+
+  if (entries.length === 0) {
+    return (
+      <div className="mt-2 text-xs text-neutral-600">
+        Keine Arbeitsbuchungen für dieses Projekt gefunden.
+      </div>
+    );
+  }
+
+  return (
+    <details className="mt-3 rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
+      <summary className="cursor-pointer select-none text-sm text-neutral-200">
+        Details: IST-Zeit je Mitarbeiter & Bereich
+        <span className="text-neutral-500"> (aufklappen)</span>
+      </summary>
+
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        <div className="hidden md:grid md:grid-cols-6 gap-2 px-1 text-xs text-neutral-500">
+          <div>Mitarbeiter</div>
+          <div>Maschine</div>
+          <div>Bank</div>
+          <div>Lack</div>
+          <div>Montage</div>
+          <div>Summe</div>
+        </div>
+
+        {entries.map((e) => (
+          <div
+            key={e.mid}
+            className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-sm tabular-nums"
+          >
+            <div className="truncate">
+  {e.mid}
+</div>
+
+
+            <div>{minutesToHours(e.mins.maschine)} h</div>
+            <div>{minutesToHours(e.mins.bank)} h</div>
+            <div>{minutesToHours(e.mins.lack)} h</div>
+            <div>{minutesToHours(e.mins.montage)} h</div>
+            <div>{minutesToHours(e.sumMin)} h</div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+})()}
+
                   </div>
+                  
                 );
               })}
             </div>
