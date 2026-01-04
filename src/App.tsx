@@ -34,7 +34,7 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
-type Tab = "heute" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "admin";
+type Tab = "zeit" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "admin";
 
 
 const LS_ACTIVE_BOOKING = "orgaboard.activeBookingProjektId.v1";
@@ -44,7 +44,7 @@ export default function App() {
   const [ms, setMsRaw] = useState<MitarbeiterState>(() => loadMitarbeiterState());
   const [settings, setSettingsRaw] = useState<Settings>(() => loadSettings());
 
-  const [tab, setTab] = useState<Tab>("heute");
+  const [tab, setTab] = useState<Tab>("zeit");
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
 
   // ✅ Aktives Buchungsziel (vom Board gesetzt)
@@ -189,7 +189,7 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button className={tab === "heute" ? btnActive : btn} onClick={() => setTab("heute")}>
+              <button className={tab === "heute" ? btnActive : btn} onClick={() => setTab("zeit")}>
                 Heute
               </button>
               <button className={tab === "woche" ? btnActive : btn} onClick={() => setTab("woche")}>
@@ -243,7 +243,7 @@ export default function App() {
             setActiveBookingProjektId={(pid) => {
               setActiveBookingProjektId(pid);
               // Optional: nach Klick im Board direkt in "Heute" wechseln
-              setTab("heute");
+              setTab("zeit");
             }}
           />
           
