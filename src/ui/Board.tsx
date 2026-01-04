@@ -1088,30 +1088,58 @@ const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) ==
                     style={{ width: totalGridWidthPx(), height: rowH }}
                   >
                     {/* Raster */}
-                    <div className="absolute inset-0">
-                      {Array.from({ length: COLS }).map((_, col) => (
-                        <div
-                          key={col}
-                          className="absolute top-0 bottom-0 border-r border-neutral-800 bg-neutral-950"
-                          style={{ left: colLeftPx(col), width: dayWidthPx(col) }}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            setHoverRowId(String(rowId));
-                            setHoverPool(false);
-                          }}
-                          onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
-                        >
-                          <div className="absolute left-0 right-0 border-t border-neutral-800/70" style={{ top: PROJECT_BAND_H }} />
-                          {Array.from({ length: Math.max(0, capped - 1) }).map((__, i) => (
-                            <div
-                              key={i}
-                              className="absolute left-0 right-0 border-t border-neutral-800/40"
-                              style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
-                            />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
+<div className="absolute inset-0">
+  {/* Hintergrund (Fr/Sa dunkler) */}
+  {Array.from({ length: COLS }).map((_, col) => {
+    const d = dateForCol(weekRow, col);
+    const dow = d.getUTCDay(); // 0=So..6=Sa
+    const isFriOrSat = dow === 5 || dow === 6;
+
+    return (
+      <div
+        key={`bg-${weekRow}-${col}`}
+        className={`absolute top-0 bottom-0 border-r border-neutral-800 ${
+          isFriOrSat ? "bg-neutral-900/70" : "bg-neutral-950"
+        }`}
+        style={{ left: colLeftPx(col), width: dayWidthPx(col) }}
+      />
+    );
+  })}
+
+  {/* Drop-Zonen (müssen über dem Hintergrund liegen!) */}
+  {Array.from({ length: COLS }).map((_, col) => (
+    <div
+      key={`drop-${rowId}-${weekRow}-${col}`}
+      className="absolute top-0 bottom-0"
+      style={{ left: colLeftPx(col), width: dayWidthPx(col) }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setHoverRowId(String(rowId));
+        setHoverPool(false);
+      }}
+      onDragEnter={() => {
+        setHoverRowId(String(rowId));
+        setHoverPool(false);
+      }}
+      onDrop={(e) => onDropOnRow(e, { rowId, weekRow, col })}
+    >
+      {/* horizontale Linien */}
+      <div
+        className="absolute left-0 right-0 border-t border-neutral-800/70"
+        style={{ top: PROJECT_BAND_H }}
+      />
+      {Array.from({ length: Math.max(0, capped - 1) }).map((__, i) => (
+        <div
+          key={i}
+          className="absolute left-0 right-0 border-t border-neutral-800/40"
+          style={{ top: PROJECT_BAND_H + (i + 1) * BOOKING_LANE_H }}
+        />
+      ))}
+    </div>
+  ))}
+</div>
+
+
 
                     {/* Buchungen */}
                     {pack.segs.map((seg) => {
