@@ -240,31 +240,40 @@ export default function AdminProjekte(p: Props) {
                     <span className="text-neutral-500"> · wird genutzt wenn Bereich-Kalk = 0</span>
                   </div>
                   <input
-                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-                    type="number"
-                    min={0}
-                    max={99999}
-                    step="0.25"
-                    value={proj.kalkStunden ?? 0}
-                    onMouseDown={(e) => {
-                      const el = e.currentTarget;
-                      if (document.activeElement !== el) {
-                        e.preventDefault();
-                        el.focus();
-                        el.select();
-                      }
-                    }}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onChange={(e) => {
-                      const v = Number(e.target.value) || 0;
-                      p.setState((s) =>
-                        upsertProject(s, {
-                          ...proj,
-                          kalkStunden: v,
-                        })
-                      );
-                    }}
-                  />
+  className={`w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm ${
+    hasAreaCalc ? "opacity-60 cursor-not-allowed" : ""
+  }`}
+  type="number"
+  min={0}
+  max={99999}
+  step="0.25"
+  disabled={hasAreaCalc}
+  title={
+    hasAreaCalc
+      ? "Wird automatisch aus der Summe der Bereiche berechnet."
+      : "Fallback: manuell pflegbar, wenn keine Bereichskalkulation gesetzt ist."
+  }
+  value={proj.kalkStunden ?? 0}
+  onMouseDown={(e) => {
+    const el = e.currentTarget;
+    if (document.activeElement !== el) {
+      e.preventDefault();
+      el.focus();
+      el.select();
+    }
+  }}
+  onFocus={(e) => e.currentTarget.select()}
+  onChange={(e) => {
+    const v = Number(e.target.value) || 0;
+    p.setState((s) =>
+      upsertProject(s, {
+        ...proj,
+        kalkStunden: v,
+      })
+    );
+  }}
+/>
+
 
                   <div className="mt-1 text-xs text-neutral-500">
                     Effektiv (für Planung):{" "}
@@ -308,10 +317,23 @@ export default function AdminProjekte(p: Props) {
                           value={curH}
                           onFocus={selectAllOnFocus}
                           onChange={(e) => {
-                            const h = Number(e.target.value) || 0;
-                            const next = setKalkMinuten(proj, x.key, Math.round(h * 60));
-                            p.setState((s) => upsertProject(s, next));
-                          }}
+  const h = Number(e.target.value) || 0;
+
+  // 1) Minuten im Bereich setzen
+  let next = setKalkMinuten(proj, x.key, Math.round(h * 60));
+
+  // 2) Summe der Bereiche → kalkStunden (Fallback)
+  const totalMin = sumKalkMinuten(next);
+  if (totalMin > 0) {
+    next = {
+      ...next,
+      kalkStunden: minutesToHours(totalMin),
+    };
+  }
+
+  p.setState((s) => upsertProject(s, next));
+}}
+
                         />
                         <div className="mt-1 text-[11px] text-neutral-500">{curMin} min</div>
                       </div>
