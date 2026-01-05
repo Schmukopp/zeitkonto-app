@@ -68,6 +68,19 @@ function calcIstMinByProjekt(state: State, projektId: string): IstByMitarbeiter 
 function sumBereiche(mins: Record<BereichKey, number>): number {
   return (mins.maschine || 0) + (mins.bank || 0) + (mins.lack || 0) + (mins.montage || 0);
 }
+function calcPlanMinTotal(proj: any): number {
+  const a = proj?.arbeitsarten;
+  if (a && typeof a === "object") {
+    const sum =
+      (Number(a?.maschine?.kalkMinuten) || 0) +
+      (Number(a?.bank?.kalkMinuten) || 0) +
+      (Number(a?.lack?.kalkMinuten) || 0) +
+      (Number(a?.montage?.kalkMinuten) || 0);
+    if (sum > 0) return Math.max(0, Math.round(sum));
+  }
+  const h = Number(proj?.kalkStunden) || 0;
+  return Math.max(0, Math.round(h * 60));
+}
 
 export default function Archiv(p: Props) {
   const mitarbeiterNameById = useMemo(() => {
@@ -145,8 +158,16 @@ export default function Archiv(p: Props) {
                 const ab = proj?.abschluss;
                 const abgeschlossenAt = Number(ab?.abgeschlossenAt) || undefined;
 
-                const istMin = Number(ab?.istMinuten) || 0;
-                const ueberzugMin = Number(ab?.ueberzugMinuten) || 0;
+                const planMin = calcPlanMinTotal(proj);
+
+const istMin =
+  Number(ab?.istMinuten) ||
+  0;
+
+const ueberzugMin =
+  Number(ab?.ueberzugMinuten) ||
+  Math.max(0, istMin - planMin);
+
 
                 const vkIst = Number(ab?.nettoVkIstEur ?? proj?.istNettoVkEur) || 0;
                 const matIst = Number(ab?.materialIstEur ?? proj?.istMaterialEur) || 0;
@@ -171,6 +192,10 @@ export default function Archiv(p: Props) {
 
                       <div className="text-sm tabular-nums text-neutral-300">
                         <div>
+                          <div>
+  Plan: <span className="text-neutral-100">{minutesToHours(planMin)} h</span>
+</div>
+
                           Ist-Zeit: <span className="text-neutral-100">{minutesToHours(istMin)} h</span>
                         </div>
                         <div>
