@@ -585,25 +585,159 @@ export function archiveProject(s: State, projektId: string, jahr: number): State
  * - entfernt ggf. boardLayout-Eintrag
  * - Buchungen bleiben absichtlich erhalten (Historie)
  */
-export function deleteProject(s: State, projektId: string): State {
-  const id = str(projektId);
+// --- Abschluss / Nachkalkulation --------------------------------------------
 
-  // Projekt entfernen
-  s.projects = (s.projects ?? []).filter((p: any) => String(p?.id) !== id) as any;
+function sumPlanMinutenFromArbeitsarten(proj: any): number {
+  const aa = proj?.arbeitsarten;
+  if (!aa || typeof aa !== "object") return 0;
 
-  // Layout bereinigen (falls vorhanden)
-  if (s.boardLayout && typeof s.boardLayout === "object") {
-    const next: Record<string, BoardLayoutPos> = {};
-    for (const [pid, pos] of Object.entries(s.boardLayout)) {
-      if (String(pid) !== id) next[String(pid)] = pos as BoardLayoutPos;
-    }
-    s.boardLayout = next;
+  const keys: Arbeitsart[] = ["maschine", "bank", "lack", "montage"];
+  let sum = 0;
+
+  for (const k of keys) {
+    const v = aa?.[k]?.kalkMinuten;
+    const n = clamp(num(v) || 0, 0, 999999);
+    sum += n;
   }
 
-  // ⚠️ Absichtlich NICHT:
-  // - Buchungen löschen
-  // Denn: Zeit-Historie/Überstunden/Urlaub/Abschlussdaten sollen nicht "verschwinden".
+  return Math.max(0, Math.round(sum));
+}
+
+function planMinutenForProjekt(proj: any): number {
+  const areaMin = sumPlanMinutenFromArbeitsarten(proj);
+
+  // Regel:
+  // - Sobald Bereichssumme > 0, gilt die Bereichskalkulation als Plan
+  // - Sonst fallback kalkStunden
+  if (areaMin > 0) return areaMin;
+
+  const fallbackHrs = clamp(num(proj?.kalkStunden) || 0, 0, 99999);
+  return Math.max(0, Math.round(fallbackHrs * 60));
+}
+
+function istMinutenForProjekt(s: State, projektId: string): number {
+  const pid = str(projektId);
+  const arr: any[] = Array.isArray((s as any)?.buchungen) ? ((s as any).buchungen as any[]) : [];
+
+  let sum = 0;
+  for (const b of arr) {
+    if (!b || typeof b !== "object") continue;
+    if (String(b?.art ?? "") !== "arbeit") continue;
+
+    const bid = str(b?.projektId);
+    if (!bid || bid !== pid) continue;
+
+    const m = Math.max(0, Math.round(num(b?.minuten) || 0));
+    if (m > 0) sum += m;
+  }
+
+  return Math.max(0, Math.round(sum));
+}
+
+function calcWertschoepfungEur(vkIstEur: number, materialIstEur: number): number {
+  // konservativ: negative Werte nicht erzwingen, aber auch nicht crashen
+  return (Number(vkIstEur) || 0) - (Number(materialIstEur) || 0);
+}
+
+function calcWertschoepfungEurProStd(wertschoepfungEur: number, istMin: number): number {
+  const min = Math.max(0, Math.round(Number(istMin) || 0));
+  if (min <= 0) return 0;
+
+  const hours = min / 60;
+  if (!Number.isFinite(hours) || hours <= 0) return 0;
+
+  const eur = Number(wertschoepfungEur) || 0;
+  const wph = eur / hours;
+
+  // auf 2 Nachkommastellen runden
+  return Math.round(wph * 100) / 100;
+}
+
+/**
+ * ✅ Abschluss setzen/aktualisieren
+ * - berechnet IST-Minuten aus Buchungen
+ * - berechnet Plan-Minuten aus Bereichen (wenn >0), sonst aus kalkStunden
+ * - berechnet Überzug-Minuten (IST - Plan, min 0)
+ * - berechnet Wertschöpfung €/h auf Basis VK-IST & Material-IST
+ *
+ * Hinweis:
+ * - "abschluss.nettoVkIstEur/materialIstEur" können aus patch kommen oder aus proj.istNettoVkEur/istMaterialEur.
+ * - Archivieren bleibt separat (archiveProject), aber AdminProjekte erlaubt Archiv erst wenn abschluss existiert.
+ */
+export function setProjectAbschluss(
+  s: State,
+  projektId: string,
+  patch: Partial<ProjektAbschluss> & {
+    nettoVkIstEur?: number;
+    materialIstEur?: number;
+  } = {}
+): State {
+  const pid = str(projektId);
+  const list: any[] = s.projects ?? [];
+  const idx = list.findIndex((p: any) => String(p?.id) === pid);
+  if (idx < 0) return s;
+
+  const proj = list[idx];
+
+  const planMin = planMinutenForProjekt(proj);
+  const istMin = istMinutenForProjekt(s, pid);
+
+  // VK/Material: patch hat Vorrang, sonst bestehende Felder (abschluss oder projekt-ist)
+  const prevAb = (proj?.abschluss && typeof proj.abschluss === "object") ? proj.abschluss : {};
+  const vkIst =
+    Number(patch.nettoVkIstEur ?? patch.nettoVkIstEur) ||
+    Number(patch.nettoVkIstEur ?? prevAb?.nettoVkIstEur ?? proj?.istNettoVkEur) ||
+    0;
+
+  const matIst =
+    Number(patch.materialIstEur ?? patch.materialIstEur) ||
+    Number(patch.materialIstEur ?? prevAb?.materialIstEur ?? proj?.istMaterialEur) ||
+    0;
+
+  const wertschoepfungEur = calcWertschoepfungEur(vkIst, matIst);
+  const wph = calcWertschoepfungEurProStd(wertschoepfungEur, istMin);
+
+  const ueberzugMin = Math.max(0, istMin - planMin);
+
+  const abgeschlossenAt =
+    Number(patch.abgeschlossenAt) ||
+    Number(prevAb?.abgeschlossenAt) ||
+    Date.now();
+
+  const nextAbschluss: ProjektAbschluss = {
+    abgeschlossenAt,
+
+    // IST-Finanzen (optional)
+    nettoVkIstEur: vkIst,
+    materialIstEur: matIst,
+
+    // Kernzahlen
+    istMinuten: istMin,
+    ueberzugMinuten: ueberzugMin,
+    wertschoepfungEurProStd: wph,
+
+    // allow patch override for any future fields
+    ...(prevAb ?? {}),
+    ...(patch ?? {}),
+    // und nach Patch nochmal die berechneten Felder „hart“ setzen:
+    istMinuten: istMin,
+    ueberzugMinuten: ueberzugMin,
+    wertschoepfungEurProStd: wph,
+    nettoVkIstEur: vkIst,
+    materialIstEur: matIst,
+    abgeschlossenAt,
+  };
+
+  s.projects = list.map((p: any, i: number) => (i === idx ? { ...p, abschluss: nextAbschluss } : p)) as any;
 
   saveState(s);
   return s;
+}
+
+/**
+ * ✅ Recalc-Helper: wenn sich Buchungen ändern und du Abschlusszahlen aktualisieren willst
+ * (z.B. nachträglich Buchungen korrigiert)
+ */
+export function recalcProjectAbschluss(s: State, projektId: string): State {
+  return setProjectAbschluss(s, projektId, {});
 }
