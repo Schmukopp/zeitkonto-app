@@ -26,14 +26,23 @@ export type BoardLayoutPos = { rowId: string; startCol: number };
 
 export type ProjektStatus = "aktiv" | "archiv";
 
+export type AbschlussArt = "normal" | "nachtrag" | "storno" | "korrektur";
+
 export type ProjektAbschluss = {
   abgeschlossenAt: number;
+
+  // ✅ neu: Abschluss-Art + Notiz (Datenvertrag)
+  abschlussArt?: AbschlussArt;
+  note?: string;
+
   nettoVkIstEur?: number;
   materialIstEur?: number;
+
   istMinuten?: number;
   wertschoepfungEurProStd?: number;
   ueberzugMinuten?: number;
 };
+
 
 export type State = {
   projects: (Projekt & {
@@ -706,18 +715,29 @@ export function setProjectAbschluss(
     Date.now();
 
   const nextAbschluss: ProjektAbschluss = {
-    // allow patch override for any future fields
-    ...(prevAb ?? {}),
-    ...(patch ?? {}),
+  // allow patch override for any future fields
+  ...(prevAb ?? {}),
+  ...(patch ?? {}),
 
-    // berechnete Felder „hart“ setzen (Single Source of Truth)
-    istMinuten: istMin,
-    ueberzugMinuten: ueberzugMin,
-    wertschoepfungEurProStd: wph,
-    nettoVkIstEur: vkIst,
-    materialIstEur: matIst,
-    abgeschlossenAt,
-  };
+  // ✅ Datenvertrag härten
+  note: (patch as any)?.note != null ? str((patch as any).note) : (prevAb as any)?.note,
+  abschlussArt:
+    (patch as any)?.abschlussArt === "normal" ||
+    (patch as any)?.abschlussArt === "nachtrag" ||
+    (patch as any)?.abschlussArt === "storno" ||
+    (patch as any)?.abschlussArt === "korrektur"
+      ? (patch as any).abschlussArt
+      : (prevAb as any)?.abschlussArt,
+
+  // berechnete Felder „hart“ setzen (Single Source of Truth)
+  istMinuten: istMin,
+  ueberzugMinuten: ueberzugMin,
+  wertschoepfungEurProStd: wph,
+  nettoVkIstEur: vkIst,
+  materialIstEur: matIst,
+  abgeschlossenAt,
+};
+
 
   s.projects = list.map((p: any, i: number) => (i === idx ? { ...p, abschluss: nextAbschluss } : p)) as any;
 

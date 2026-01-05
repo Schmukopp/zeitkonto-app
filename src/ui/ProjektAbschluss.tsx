@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { State } from "../core/timeStore";
-import { setProjectActive, upsertProject } from "../core/timeStore";
+import { setProjectActive, upsertProject, setProjectAbschluss } from "../core/timeStore";
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 
 type Props = {
@@ -12,7 +12,8 @@ type Props = {
   wertZielEurH: number; // aus Settings
 };
 
-type AbschlussArt = "fertigung" | "montage" | "abgeholt";
+type AbschlussArt = "normal" | "nachtrag" | "storno" | "korrektur";
+
 
 function fmtName(v: unknown): string {
   const s = String(v ?? "").trim();
@@ -100,54 +101,37 @@ export default function ProjektAbschluss(p: Props) {
   const selectedIstMin = selectedId ? (istTotal[String(selectedId)] ?? 0) : 0;
   const selectedDeltaMin = selectedSollMin - selectedIstMin;
 
-  function finishSelected() {
-    if (!selectedId) return;
-    const proj = byId.get(String(selectedId)) as any;
-    if (!proj) return;
+ function finishSelected() {
+  if (!selectedId) return;
+  const proj = byId.get(String(selectedId)) as any;
+  if (!proj) return;
 
-    const now = Date.now();
+  const istVk = Number(proj.istNettoVkEur) || 0;
+  const istMat = Number(proj.istMaterialEur) || 0;
 
-    // Istwerte aus Projekt (werden im Nachkalk-Bereich eingetragen)
-    const istVk = Number(proj.istNettoVkEur) || 0;
-    const istMat = Number(proj.istMaterialEur) || 0;
+  // ✅ Abschluss zentral im Store rechnen & speichern
+  p.setState((s) =>
+    setProjectAbschluss(s, String(selectedId), {
+      nettoVkIstEur: istVk,
+      materialIstEur: istMat,
+      note,
+      abschlussArt,
+    })
+  );
 
-    const istMinuten = Number(selectedIstMin) || 0;
-    const istH = minutesToHours(istMinuten);
+  // ✅ Projekt operativ beenden (aber noch nicht archivieren)
+  p.setState((s) => setProjectActive(s, String(selectedId), false));
 
-    const wertGesamt = Math.max(0, istVk) - Math.max(0, istMat);
-    const wertProStd = istH > 0 ? wertGesamt / istH : 0;
+  setNote("");
 
-    const sollMinuten = Number(selectedSollMin) || 0;
-    const ueberzugMinuten = Math.max(0, istMinuten - sollMinuten);
+  // ✅ nächstes Projekt auswählen
+  const next =
+    boardProjects.find((x: any) => x?.zugeordnetAnId === p.mitarbeiterId)?.id ??
+    boardProjects[0]?.id ??
+    "";
+  setSelectedId(String(next));
+}
 
-    // ✅ Abschlussdaten dauerhaft speichern (Basis Archiv + Statistik)
-    p.setState((s) =>
-      upsertProject(s, {
-        ...proj,
-        abschluss: {
-          abgeschlossenAt: now,
-          nettoVkIstEur: istVk,
-          materialIstEur: istMat,
-          istMinuten: istMinuten,
-          wertschoepfungEurProStd: istH > 0 ? wertProStd : 0,
-          ueberzugMinuten: ueberzugMinuten > 0 ? ueberzugMinuten : 0,
-          // note & art optional später in Datenvertrag aufnehmen
-        },
-      } as any)
-    );
-
-    // ✅ "fertig" = active false (aber noch NICHT archiviert)
-    p.setState((s) => setProjectActive(s, String(selectedId), false));
-
-    setNote("");
-
-    // ✅ neues Projekt wählen (aus den aktuellen boardProjects)
-    const next =
-      boardProjects.find((x: any) => x?.zugeordnetAnId === p.mitarbeiterId)?.id ??
-      boardProjects[0]?.id ??
-      "";
-    setSelectedId(String(next));
-  }
 
   function updateIst(pid: string, patch: Partial<{ istNettoVkEur: number; istMaterialEur: number }>) {
     const proj = byId.get(String(pid)) as any;
@@ -280,14 +264,14 @@ export default function ProjektAbschluss(p: Props) {
         <div className="text-lg font-semibold">Abschluss</div>
 
         <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-          <button type="button" className={abschlussArt === "fertigung" ? btnActive : btn} onClick={() => setAbschlussArt("fertigung")} disabled={!selectedId}>
-            Fertigung fertig
+          <button type="button" className={abschlussArt === "normal" ? btnActive : btn} onClick={() => setAbschlussArt("normal")} disabled={!selectedId}>
+            Normal
           </button>
-          <button type="button" className={abschlussArt === "montage" ? btnActive : btn} onClick={() => setAbschlussArt("montage")} disabled={!selectedId}>
-            Montage fertig
+          <button type="button" className={abschlussArt === "nachtrag" ? btnActive : btn} onClick={() => setAbschlussArt("nachtrag")} disabled={!selectedId}>
+            Nachtrag
           </button>
-          <button type="button" className={abschlussArt === "abgeholt" ? btnActive : btn} onClick={() => setAbschlussArt("abgeholt")} disabled={!selectedId}>
-            Abgeholt / geliefert
+          <button type="button" className={abschlussArt === "korrektur" ? btnActive : btn} onClick={() => setAbschlussArt("korrektur")} disabled={!selectedId}>
+            Korrektur
           </button>
         </div>
 
