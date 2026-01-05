@@ -1,6 +1,7 @@
 // src/ui/Statistik.tsx
 import React, { useMemo, useState } from "react";
 import type { State } from "../core/timeStore";
+import { getJahresStatistik } from "../core/timeStore";
 
 function fmtMoney(n?: number): string {
   const x = Number(n);
@@ -14,11 +15,6 @@ function fmt1(n?: number): string {
   return x.toFixed(1);
 }
 
-function minutesToHoursNum(min?: number): number {
-  const m = Number(min) || 0;
-  return m / 60;
-}
-
 type Props = {
   state: State;
 };
@@ -26,148 +22,152 @@ type Props = {
 type YearOption = { key: string; label: string; year: number | null };
 
 export default function Statistik(p: Props) {
-  const archived = useMemo(() => {
-    return (p.state.projects ?? []).filter((pr: any) => pr?.status === "archiv");
-  }, [p.state.projects]);
+  try {
+    const archived = useMemo(() => {
+      return (p.state.projects ?? []).filter((pr: any) => pr?.status === "archiv");
+    }, [p.state.projects]);
 
-  const yearOptions: YearOption[] = useMemo(() => {
-    const years = new Set<number>();
-    for (const pr of archived) {
-      const y = Number(pr?.archivJahr);
-      if (Number.isFinite(y) && y >= 2000 && y <= 2100) years.add(y);
-    }
-    const sorted = Array.from(years).sort((a, b) => b - a);
+    const yearOptions: YearOption[] = useMemo(() => {
+      const years = new Set<number>();
+      for (const pr of archived) {
+        const y = Number((pr as any)?.archivJahr);
+        if (Number.isFinite(y) && y >= 2000 && y <= 2100) years.add(y);
+      }
+      const sorted = Array.from(years).sort((a, b) => b - a);
 
-    return [
-      { key: "all", label: "Alle Jahre", year: null },
-      ...sorted.map((y) => ({ key: String(y), label: String(y), year: y })),
-    ];
-  }, [archived]);
+      return [
+        { key: "all", label: "Alle Jahre", year: null },
+        ...sorted.map((y) => ({ key: String(y), label: String(y), year: y })),
+      ];
+    }, [archived]);
 
-  const [yearKey, setYearKey] = useState<string>(() => yearOptions[0]?.key ?? "all");
+    const [yearKey, setYearKey] = useState<string>("all");
 
-  const selectedYear = useMemo(() => {
-    const opt = yearOptions.find((o) => o.key === yearKey);
-    return opt?.year ?? null;
-  }, [yearKey, yearOptions]);
+    const selectedYear = useMemo(() => {
+      const opt = yearOptions.find((o) => o.key === yearKey);
+      return opt?.year ?? null;
+    }, [yearKey, yearOptions]);
 
-  const stats = useMemo(() => {
-    const list = selectedYear == null ? archived : archived.filter((p: any) => Number(p?.archivJahr) === selectedYear);
+    const view = useMemo(() => {
+      // Wenn gar keine Archivjahre existieren, bleibt alles 0
+      const years = yearOptions
+        .filter((o) => o.year != null)
+        .map((o) => Number(o.year))
+        .filter((y) => Number.isFinite(y));
 
-    let count = 0;
-    let sumIstMin = 0;
-    let sumUeberzugMin = 0;
+      if (selectedYear == null) {
+        let projektAnzahl = 0;
+        let istMinutenGesamt = 0;
+        let wertschoepfungEurGesamt = 0;
 
-    let sumVk = 0;
-    let sumMat = 0;
+        for (const y of years) {
+          const js = getJahresStatistik(p.state, y);
+          projektAnzahl += js.projektAnzahl;
+          istMinutenGesamt += js.istMinutenGesamt;
+          wertschoepfungEurGesamt += js.wertschoepfungEurGesamt;
+        }
 
-    // Wertschöpfung = VK - Material (Istwerte)
-    for (const pr of list) {
-      count++;
+        const istStundenGesamt = istMinutenGesamt / 60;
+        const wertschoepfungEurProStd = istStundenGesamt > 0 ? wertschoepfungEurGesamt / istStundenGesamt : 0;
 
-      const ab = pr?.abschluss;
-      const istMin = Number(ab?.istMinuten) || 0;
-      const ue = Number(ab?.ueberzugMinuten) || 0;
+        return {
+          label: "Alle Jahre",
+          projektAnzahl,
+          istMinutenGesamt,
+          istStundenGesamt,
+          wertschoepfungEurGesamt,
+          wertschoepfungEurProStd,
+        };
+      }
 
-      sumIstMin += Math.max(0, istMin);
-      sumUeberzugMin += Math.max(0, ue);
+      const js = getJahresStatistik(p.state, selectedYear);
 
-      const vk = Number(ab?.nettoVkIstEur ?? pr?.istNettoVkEur) || 0;
-      const mat = Number(ab?.materialIstEur ?? pr?.istMaterialEur) || 0;
+      return {
+        label: String(selectedYear),
+        projektAnzahl: js.projektAnzahl,
+        istMinutenGesamt: js.istMinutenGesamt,
+        istStundenGesamt: js.istStundenGesamt,
+        wertschoepfungEurGesamt: js.wertschoepfungEurGesamt,
+        wertschoepfungEurProStd: js.wertschoepfungEurProStd,
+      };
+    }, [p.state, selectedYear, yearOptions]);
 
-      sumVk += Math.max(0, vk);
-      sumMat += Math.max(0, mat);
-    }
+    const hasArchiv = archived.length > 0;
 
-    const sumIstH = minutesToHoursNum(sumIstMin);
-    const sumUeberzugH = minutesToHoursNum(sumUeberzugMin);
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-2xl font-semibold">Jahres- / Meisterstatistik</div>
+              <div className="text-sm text-neutral-400">
+                Kennzahlen aus archivierten Projekten (Quelle: Store-Statistik).
+              </div>
+            </div>
 
-    const sumWert = Math.max(0, sumVk) - Math.max(0, sumMat);
-    const avgWertProStd = sumIstH > 0 ? sumWert / sumIstH : 0;
-
-    return {
-      listCount: count,
-      sumIstMin,
-      sumIstH,
-      sumUeberzugMin,
-      sumUeberzugH,
-      sumVk,
-      sumMat,
-      sumWert,
-      avgWertProStd,
-    };
-  }, [archived, selectedYear]);
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="text-2xl font-semibold">Meisterstatistik</div>
-            <div className="text-sm text-neutral-400">
-              Kennzahlen aus archivierten Projekten (Basis: Abschluss + Nachkalkulation).
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-neutral-400">Jahr</div>
+              <select
+                className="rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
+                value={yearKey}
+                onChange={(e) => setYearKey(e.target.value)}
+                disabled={yearOptions.length === 0}
+              >
+                {yearOptions.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <div className="text-sm text-neutral-400">Jahr</div>
-            <select
-              className="rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm"
-              value={yearKey}
-              onChange={(e) => setYearKey(e.target.value)}
-            >
-              {yearOptions.map((o) => (
-                <option key={o.key} value={o.key}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
+
+        {!hasArchiv ? (
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
+            Noch keine Projekte im Archiv – Statistik ist leer.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+              <div className="text-xs text-neutral-500">Auswahl</div>
+              <div className="text-2xl font-semibold tabular-nums">{view.label}</div>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+              <div className="text-xs text-neutral-500">Anzahl Projekte</div>
+              <div className="text-2xl font-semibold tabular-nums">{view.projektAnzahl}</div>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+              <div className="text-xs text-neutral-500">Summe Ist-Zeit</div>
+              <div className="text-2xl font-semibold tabular-nums">{fmt1(view.istStundenGesamt)} h</div>
+              <div className="text-xs text-neutral-500 tabular-nums">{Math.round(view.istMinutenGesamt)} min</div>
+            </div>
+
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+              <div className="text-xs text-neutral-500">Summe Wertschöpfung</div>
+              <div className="text-2xl font-semibold tabular-nums">{fmtMoney(view.wertschoepfungEurGesamt)} €</div>
+              <div className="text-xs text-neutral-500">
+                Ø Wert/Std:{" "}
+                <span className="text-neutral-200 tabular-nums">{fmtMoney(view.wertschoepfungEurProStd)} €/h</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-
-      {archived.length === 0 ? (
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-400">
-          Noch keine Projekte im Archiv – Statistik ist leer.
+    );
+  } catch (err: any) {
+    return (
+      <div className="rounded-2xl border border-red-800 bg-neutral-950 p-4">
+        <div className="text-lg font-semibold text-red-300">Statistik-Fehler</div>
+        <div className="mt-2 text-sm text-neutral-300">
+          Beim Rendern ist ein Fehler passiert. Unten steht die Meldung:
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Anzahl Projekte</div>
-            <div className="text-2xl font-semibold tabular-nums">{stats.listCount}</div>
-          </div>
-
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Summe Ist-Zeit</div>
-            <div className="text-2xl font-semibold tabular-nums">{fmt1(stats.sumIstH)} h</div>
-            <div className="text-xs text-neutral-500 tabular-nums">{Math.round(stats.sumIstMin)} min</div>
-          </div>
-
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Summe Überzug</div>
-            <div className="text-2xl font-semibold tabular-nums">{fmt1(stats.sumUeberzugH)} h</div>
-            <div className="text-xs text-neutral-500 tabular-nums">{Math.round(stats.sumUeberzugMin)} min</div>
-          </div>
-
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Summe Ist Netto-VK</div>
-            <div className="text-2xl font-semibold tabular-nums">{fmtMoney(stats.sumVk)} €</div>
-          </div>
-
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Summe Ist Material</div>
-            <div className="text-2xl font-semibold tabular-nums">{fmtMoney(stats.sumMat)} €</div>
-          </div>
-
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="text-xs text-neutral-500">Summe Wertschöpfung</div>
-            <div className="text-2xl font-semibold tabular-nums">{fmtMoney(stats.sumWert)} €</div>
-            <div className="text-xs text-neutral-500">
-              Ø Wert/Std: <span className="text-neutral-200 tabular-nums">{fmtMoney(stats.avgWertProStd)} €/h</span>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+        <pre className="mt-3 whitespace-pre-wrap rounded-xl border border-neutral-800 bg-neutral-900 p-3 text-xs text-neutral-200">
+          {String(err?.stack || err?.message || err)}
+        </pre>
+      </div>
+    );
+  }
 }

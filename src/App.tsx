@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Heute from "./ui/Heute";
+import Statistik from "./ui/Statistik";
 import Woche from "./ui/Woche";
 import AdminMitarbeiter from "./ui/AdminMitarbeiter";
 import AdminProjekte from "./ui/AdminProjekte";
@@ -34,7 +35,7 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
-type Tab = "zeit" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "admin";
+type Tab = "zeit" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "statistik" | "admin";
 
 
 const LS_ACTIVE_BOOKING = "orgaboard.activeBookingProjektId.v1";
@@ -204,6 +205,13 @@ export default function App() {
               <button className={tab === "abschluss" ? btnActive : btn} onClick={() => setTab("abschluss")}>
                 Abschluss
               </button>
+              <button
+  className={tab === "statistik" ? btnActive : btn}
+  onClick={() => setTab("statistik")}
+>
+  Statistik
+</button>
+
               <button className={tab === "archiv" ? btnActive : btn} onClick={() => setTab("archiv")}>
   Archiv
 </button>
@@ -247,12 +255,12 @@ export default function App() {
             }}
           />
           
-        ) : tab === "zeitstrahl" ? (
+                ) : tab === "zeitstrahl" ? (
           <Zeitstrahlen {...({ state, setState, ms, settings } as any)} />
-         ) : tab === "archiv" ? (
-    <Archiv state={state} ms={ms} />
-
-
+        ) : tab === "statistik" ? (
+          <Statistik state={state} />
+        ) : tab === "archiv" ? (
+          <Archiv state={state} ms={ms} />
         ) : tab === "abschluss" ? (
           <ProjektAbschluss
             state={state}
@@ -262,6 +270,7 @@ export default function App() {
             mitarbeiterName={mitarbeiterName}
             wertZielEurH={settings.wertschoepfungZielEurProStd ?? 105}
           />
+
         ) : tab === "woche" ? (
           <Woche
             state={state}
