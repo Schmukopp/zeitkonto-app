@@ -64,6 +64,13 @@ export default function AdminProjekte(p: Props) {
         .filter((m: any) => m && typeof m.id === "string")
         .map((m: any) => ({ id: String(m.id), name: String(m.name ?? m.id) }))
     : [];
+  // ✅ Rolle des aktuell ausgewählten Mitarbeiters (für Produkt-Rechte)
+  const selectedMitarbeiter = (p.ms as any)?.mitarbeiter?.find(
+    (m: any) => String(m.id) === String((p.ms as any)?.selectedId)
+  );
+
+  const rolle = String(selectedMitarbeiter?.rolle ?? "");
+  const canDelete = rolle === "meister" || rolle === "admin";
 
   function archiveProjekt(proj: any) {
     if (!proj?.abschluss) {
@@ -185,24 +192,27 @@ export default function AdminProjekte(p: Props) {
                   >
                     Ins Archiv
                   </button>
-                  <button
-  className="rounded-xl border border-red-700 bg-neutral-950 px-3 py-2 text-sm text-red-300 hover:bg-red-600 hover:text-neutral-950"
-  onClick={() => {
-    const ok = window.confirm(
-      "Projekt wirklich LÖSCHEN?\n\n" +
-        "⚠️ Das Projekt wird entfernt.\n" +
-        "• Board-Zuordnung wird gelöscht\n" +
-        "• Buchungen bleiben bestehen (Zeit-Historie)\n\n" +
-        "Nur für Fehlerkorrekturen gedacht!"
-    );
-    if (!ok) return;
+                  {canDelete ? (
+  <button
+    className="rounded-xl border border-red-700 bg-neutral-950 px-3 py-2 text-sm text-red-300 hover:bg-red-600 hover:text-neutral-950"
+    onClick={() => {
+      const ok = window.confirm(
+        "Projekt wirklich LÖSCHEN?\n\n" +
+          "⚠️ Das Projekt wird entfernt.\n" +
+          "• Board-Zuordnung wird gelöscht\n" +
+          "• Buchungen bleiben bestehen (Zeit-Historie)\n\n" +
+          "Nur für Admin/Meister – Fehlerkorrekturen!"
+      );
+      if (!ok) return;
 
-    p.setState((s) => deleteProject(s, String(proj.id)));
-  }}
-  type="button"
->
-  Löschen
-</button>
+      p.setState((s) => deleteProject(s, String(proj.id)));
+    }}
+    type="button"
+  >
+    Löschen (Admin)
+  </button>
+) : null}
+
 
                 </div>
               </div>
