@@ -683,15 +683,16 @@ export function setProjectAbschluss(
   const istMin = istMinutenForProjekt(s, pid);
 
   // VK/Material: patch hat Vorrang, sonst bestehende Felder (abschluss oder projekt-ist)
-  const prevAb = (proj?.abschluss && typeof proj.abschluss === "object") ? proj.abschluss : {};
+  const prevAb = proj?.abschluss && typeof proj.abschluss === "object" ? proj.abschluss : {};
+
   const vkIst =
-    Number(patch.nettoVkIstEur ?? patch.nettoVkIstEur) ||
-    Number(patch.nettoVkIstEur ?? prevAb?.nettoVkIstEur ?? proj?.istNettoVkEur) ||
+    Number(patch.nettoVkIstEur) ||
+    Number(prevAb?.nettoVkIstEur ?? proj?.istNettoVkEur) ||
     0;
 
   const matIst =
-    Number(patch.materialIstEur ?? patch.materialIstEur) ||
-    Number(patch.materialIstEur ?? prevAb?.materialIstEur ?? proj?.istMaterialEur) ||
+    Number(patch.materialIstEur) ||
+    Number(prevAb?.materialIstEur ?? proj?.istMaterialEur) ||
     0;
 
   const wertschoepfungEur = calcWertschoepfungEur(vkIst, matIst);
@@ -705,21 +706,11 @@ export function setProjectAbschluss(
     Date.now();
 
   const nextAbschluss: ProjektAbschluss = {
-    abgeschlossenAt,
-
-    // IST-Finanzen (optional)
-    nettoVkIstEur: vkIst,
-    materialIstEur: matIst,
-
-    // Kernzahlen
-    istMinuten: istMin,
-    ueberzugMinuten: ueberzugMin,
-    wertschoepfungEurProStd: wph,
-
     // allow patch override for any future fields
     ...(prevAb ?? {}),
     ...(patch ?? {}),
-    // und nach Patch nochmal die berechneten Felder „hart“ setzen:
+
+    // berechnete Felder „hart“ setzen (Single Source of Truth)
     istMinuten: istMin,
     ueberzugMinuten: ueberzugMin,
     wertschoepfungEurProStd: wph,
@@ -741,6 +732,7 @@ export function setProjectAbschluss(
 export function recalcProjectAbschluss(s: State, projektId: string): State {
   return setProjectAbschluss(s, projektId, {});
 }
+
 // ✅ Projekt hart löschen (inkl. Buchungen)
 // Hinweis: Wenn du Löschung nicht willst, nimm Option B.
 export function deleteProject(s: State, projektId: string): State {
@@ -762,4 +754,138 @@ export function deleteProject(s: State, projektId: string): State {
 
   saveState(s);
   return s;
+}
+
+// --- Statistik / Jahresauswertung -------------------------------------------
+
+export type ProjektJahresStatistik = {
+  projektId: string;
+  projektName: string;
+
+  planMinuten: number;
+  istMinuten: number;
+  ueberzugMinuten: number;
+
+  wertschoepfungEur: number;
+  wertschoepfungEurProStd: number;
+};
+
+export type JahresStatistik = {
+  jahr: number;
+
+  projektAnzahl: number;
+
+  istMinutenGesamt: number;
+  istStundenGesamt: number;
+
+  wertschoepfungEurGesamt: number;
+  wertschoepfungEurProStd: number;
+
+  projekte: ProjektJahresStatistik[];
+};
+
+function istBuchungInJahr(b: any, jahr: number): boolean {
+  if (!b?.datum) return false;
+  const y = Number(String(b.datum).slice(0, 4));
+  return y === jahr;
+}
+
+/**
+ * Projekt-Statistik für EIN Jahr.
+ * Quelle:
+ * - bevorzugt projekt.abschluss.istMinuten
+ * - fallback: Buchungen in diesem Jahr
+ *
+ * Hinweis:
+ * - Plan-Minuten: immer aus Projekt (Arbeitsarten > 0 sonst kalkStunden)
+ * - VK/Material: aus Abschluss oder Projekt-IST-Feldern
+ */
+export function getProjektJahresStatistik(
+  s: State,
+  projektId: string,
+  jahr: number
+): ProjektJahresStatistik | null {
+  const pid = String(projektId);
+  const proj: any = (s.projects ?? []).find((p: any) => String(p?.id) === pid);
+  if (!proj) return null;
+
+  // --- IST-Minuten ---
+  let istMinuten = 0;
+
+  if (proj?.abschluss?.istMinuten != null) {
+    istMinuten = Math.max(0, Number(proj.abschluss.istMinuten) || 0);
+  } else {
+    for (const b of s.buchungen ?? []) {
+      if (b?.art !== "arbeit") continue;
+      if (String(b?.projektId) !== pid) continue;
+      if (!istBuchungInJahr(b, jahr)) continue;
+
+      istMinuten += Math.max(0, Number(b?.minuten) || 0);
+    }
+  }
+
+  // --- PLAN ---
+  const planMinuten = planMinutenForProjekt(proj);
+
+  // --- ÜBERZUG ---
+  const ueberzugMinuten = Math.max(0, istMinuten - planMinuten);
+
+  // --- WERTSCHÖPFUNG ---
+  const vkIst = Number(proj?.abschluss?.nettoVkIstEur ?? proj?.istNettoVkEur) || 0;
+  const matIst = Number(proj?.abschluss?.materialIstEur ?? proj?.istMaterialEur) || 0;
+
+  const wertschoepfungEur = calcWertschoepfungEur(vkIst, matIst);
+  const wertschoepfungEurProStd = calcWertschoepfungEurProStd(wertschoepfungEur, istMinuten);
+
+  return {
+    projektId: pid,
+    projektName: proj?.name ?? "Projekt",
+
+    planMinuten,
+    istMinuten,
+    ueberzugMinuten,
+
+    wertschoepfungEur,
+    wertschoepfungEurProStd,
+  };
+}
+
+/**
+ * Jahres-Gesamtstatistik (Chef/Meister).
+ * Nimmt standardmäßig nur archivierte Projekte mit archivJahr === jahr.
+ */
+export function getJahresStatistik(s: State, jahr: number): JahresStatistik {
+  const projekte: ProjektJahresStatistik[] = [];
+
+  for (const p of s.projects ?? []) {
+    if ((p as any)?.status !== "archiv") continue;
+    if (Number((p as any)?.archivJahr) !== Number(jahr)) continue;
+
+    const ps = getProjektJahresStatistik(s, (p as any).id, jahr);
+    if (ps) projekte.push(ps);
+  }
+
+  const istMinutenGesamt = projekte.reduce((a, x) => a + (Number(x.istMinuten) || 0), 0);
+  const wertschoepfungEurGesamt = projekte.reduce((a, x) => a + (Number(x.wertschoepfungEur) || 0), 0);
+
+  const istStundenGesamt = Math.round((istMinutenGesamt / 60) * 100) / 100;
+
+  const wertschoepfungEurProStd =
+    istMinutenGesamt > 0
+      ? Math.round((wertschoepfungEurGesamt / (istMinutenGesamt / 60)) * 100) / 100
+      : 0;
+
+  return {
+    jahr: Number(jahr),
+
+    projektAnzahl: projekte.length,
+
+    istMinutenGesamt,
+    istStundenGesamt,
+
+    wertschoepfungEurGesamt,
+    wertschoepfungEurProStd,
+
+    projekte,
+  };
 }
