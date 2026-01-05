@@ -741,3 +741,25 @@ export function setProjectAbschluss(
 export function recalcProjectAbschluss(s: State, projektId: string): State {
   return setProjectAbschluss(s, projektId, {});
 }
+// ✅ Projekt hart löschen (inkl. Buchungen)
+// Hinweis: Wenn du Löschung nicht willst, nimm Option B.
+export function deleteProject(s: State, projektId: string): State {
+  const pid = String(projektId);
+
+  // 1) Running Timer stoppen, falls er auf dieses Projekt zeigt
+  if (s.running && String((s.running as any).projektId) === pid) {
+    (s as any).running = null;
+  }
+
+  // 2) Projekt entfernen
+  s.projects = (s.projects ?? []).filter((p: any) => String(p?.id) !== pid) as any;
+
+  // 3) Buchungen zu diesem Projekt entfernen (nur Arbeit + Statusbuchungen mit projektId, falls vorhanden)
+  // Statusbuchungen haben oft kein projektId – die bleiben.
+  (s as any).buchungen = Array.isArray((s as any).buchungen)
+    ? ((s as any).buchungen as any[]).filter((b: any) => String(b?.projektId ?? "") !== pid)
+    : [];
+
+  saveState(s);
+  return s;
+}

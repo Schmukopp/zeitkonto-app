@@ -68,6 +68,8 @@ function calcIstMinByProjekt(state: State, projektId: string): IstByMitarbeiter 
 function sumBereiche(mins: Record<BereichKey, number>): number {
   return (mins.maschine || 0) + (mins.bank || 0) + (mins.lack || 0) + (mins.montage || 0);
 }
+
+// Plan-Minuten: Bereiche > Fallback kalkStunden
 function calcPlanMinTotal(proj: any): number {
   const a = proj?.arbeitsarten;
   if (a && typeof a === "object") {
@@ -145,173 +147,181 @@ export default function Archiv(p: Props) {
         </div>
       ) : (
         archived.map((g) => (
-          <div key={String(g.year)} className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
-            <div className="flex items-baseline justify-between gap-2">
-              <div className="text-lg font-semibold">Archiv {g.year}</div>
-              <div className="text-sm text-neutral-400">
-                Projekte: <span className="text-neutral-100">{g.items.length}</span>
+          <React.Fragment key={String(g.year)}>
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-lg font-semibold">Archiv {g.year}</div>
+                <div className="text-sm text-neutral-400">
+                  Projekte: <span className="text-neutral-100">{g.items.length}</span>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                {g.items.map((proj: any) => {
+                  const ab = proj?.abschluss;
+                  const abgeschlossenAt = Number(ab?.abgeschlossenAt) || undefined;
+
+                  const byMitarbeiterOuter = calcIstMinByProjekt(p.state, String(proj.id));
+                  const istMinFromBookings = Object.values(byMitarbeiterOuter).reduce(
+                    (acc, mins) => acc + sumBereiche(mins),
+                    0
+                  );
+
+                  const istMin = Number(ab?.istMinuten) || istMinFromBookings || 0;
+
+                  const planMin = calcPlanMinTotal(proj);
+
+                  const ueberzugMinStored = Number(ab?.ueberzugMinuten) || 0;
+                  const ueberzugMinEff =
+                    ueberzugMinStored > 0 ? ueberzugMinStored : Math.max(0, istMin - planMin);
+
+                  const vkIst = Number(ab?.nettoVkIstEur ?? proj?.istNettoVkEur) || 0;
+                  const matIst = Number(ab?.materialIstEur ?? proj?.istMaterialEur) || 0;
+
+                  const wph = Number(ab?.wertschoepfungEurProStd) || 0;
+
+                  const operativName = (() => {
+                    const id = String(proj?.zugeordnetAnId ?? "");
+                    if (!id) return "—";
+                    return mitarbeiterNameById.get(id) ?? id;
+                  })();
+
+                  const wertGesamt = Math.max(0, vkIst) - Math.max(0, matIst);
+
+                  return (
+                    <div key={String(proj.id)} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          {/* Projekt-ID bewusst entfernt */}
+                          <div className="text-sm text-neutral-100 truncate">{fmtName(proj.name)}</div>
+
+                          <div className="mt-1 text-xs text-neutral-500">
+                            Abgeschlossen: <span className="text-neutral-300">{fmtDate(abgeschlossenAt)}</span>
+                            <span className="text-neutral-600"> · </span>
+                            Archiviert:{" "}
+                            <span className="text-neutral-300">
+                              {fmtDate(Number(proj?.archiviertAt) || undefined)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-sm tabular-nums text-neutral-300">
+                          <div>
+                            Plan: <span className="text-neutral-100">{minutesToHours(planMin)} h</span>
+                          </div>
+                          <div>
+                            Ist-Zeit: <span className="text-neutral-100">{minutesToHours(istMin)} h</span>
+                          </div>
+                          <div>
+                            Überzug: <span className="text-neutral-100">{minutesToHours(ueberzugMinEff)} h</span>{" "}
+                            <span className="text-xs text-neutral-500">({ueberzugMinEff} min)</span>
+                          </div>
+                          {wph > 0 ? (
+                            <div className="text-xs text-neutral-500">
+                              Wert/Std: <span className="text-neutral-200">{fmtMoney(wph)} €/h</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm tabular-nums">
+                        <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                          <div className="text-xs text-neutral-500">Ist Netto-VK</div>
+                          <div className="text-neutral-100">{fmtMoney(vkIst)} €</div>
+                        </div>
+                        <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                          <div className="text-xs text-neutral-500">Ist Material</div>
+                          <div className="text-neutral-100">{fmtMoney(matIst)} €</div>
+                        </div>
+                        <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+                          <div className="text-xs text-neutral-500">Wertschöpfung</div>
+                          <div className="text-neutral-100">{fmtMoney(wertGesamt)} €</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-xs text-neutral-500">
+                        Zugeordnet (operativ): <span className="text-neutral-300">{operativName}</span>
+                      </div>
+
+                      {(() => {
+                        const byMitarbeiter = calcIstMinByProjekt(p.state, String(proj.id));
+                        const entries = Object.entries(byMitarbeiter).map(([mid, mins]) => ({
+                          mid,
+                          mins,
+                          sumMin: sumBereiche(mins),
+                        }));
+
+                        entries.sort((a, b) => b.sumMin - a.sumMin);
+
+                        if (entries.length === 0) {
+                          return (
+                            <div className="mt-2 text-xs text-neutral-600">
+                              Keine Arbeitsbuchungen für dieses Projekt gefunden.
+                            </div>
+                          );
+                        }
+
+                        const sum = entries.reduce(
+                          (acc, e) => {
+                            acc.maschine += e.mins.maschine || 0;
+                            acc.bank += e.mins.bank || 0;
+                            acc.lack += e.mins.lack || 0;
+                            acc.montage += e.mins.montage || 0;
+                            acc.total += e.sumMin || 0;
+                            return acc;
+                          },
+                          { maschine: 0, bank: 0, lack: 0, montage: 0, total: 0 }
+                        );
+
+                        return (
+                          <details className="mt-3 rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
+                            <summary className="cursor-pointer select-none text-sm text-neutral-200">
+                              Details: IST-Zeit je Mitarbeiter & Bereich
+                              <span className="text-neutral-500"> (aufklappen)</span>
+                            </summary>
+
+                            <div className="mt-3 grid grid-cols-1 gap-2">
+                              <div className="hidden md:grid md:grid-cols-6 gap-2 px-1 text-xs text-neutral-500">
+                                <div>Mitarbeiter</div>
+                                <div>Maschine</div>
+                                <div>Bank</div>
+                                <div>Lack</div>
+                                <div>Montage</div>
+                                <div>Summe</div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm font-semibold tabular-nums">
+                                <div>Summe</div>
+                                <div>{minutesToHours(sum.maschine)} h</div>
+                                <div>{minutesToHours(sum.bank)} h</div>
+                                <div>{minutesToHours(sum.lack)} h</div>
+                                <div>{minutesToHours(sum.montage)} h</div>
+                                <div>{minutesToHours(sum.total)} h</div>
+                              </div>
+
+                              {entries.map((e) => (
+                                <div
+                                  key={e.mid}
+                                  className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-sm tabular-nums"
+                                >
+                                  <div className="truncate">{mitarbeiterNameById.get(e.mid) ?? e.mid}</div>
+                                  <div>{minutesToHours(e.mins.maschine)} h</div>
+                                  <div>{minutesToHours(e.mins.bank)} h</div>
+                                  <div>{minutesToHours(e.mins.lack)} h</div>
+                                  <div>{minutesToHours(e.mins.montage)} h</div>
+                                  <div>{minutesToHours(e.sumMin)} h</div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        );
+                      })()}
+                    </div>
+                  );
+                })}
               </div>
             </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-2">
-              {g.items.map((proj: any) => {
-                const ab = proj?.abschluss;
-                const abgeschlossenAt = Number(ab?.abgeschlossenAt) || undefined;
-
-                const planMin = calcPlanMinTotal(proj);
-
-const istMin =
-  Number(ab?.istMinuten) ||
-  0;
-
-const ueberzugMin =
-  Number(ab?.ueberzugMinuten) ||
-  Math.max(0, istMin - planMin);
-
-
-                const vkIst = Number(ab?.nettoVkIstEur ?? proj?.istNettoVkEur) || 0;
-                const matIst = Number(ab?.materialIstEur ?? proj?.istMaterialEur) || 0;
-
-                const wph = Number(ab?.wertschoepfungEurProStd) || 0;
-
-                return (
-                  <div key={String(proj.id)} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm text-neutral-100 truncate">
-                          {fmtName(proj.name)} <span className="text-neutral-500">·</span>{" "}
-                          <span className="text-neutral-400">{String(proj.id)}</span>
-                        </div>
-                        <div className="mt-1 text-xs text-neutral-500">
-                          Abgeschlossen: <span className="text-neutral-300">{fmtDate(abgeschlossenAt)}</span>
-                          <span className="text-neutral-600"> · </span>
-                          Archiviert:{" "}
-                          <span className="text-neutral-300">{fmtDate(Number(proj?.archiviertAt) || undefined)}</span>
-                        </div>
-                      </div>
-
-                      <div className="text-sm tabular-nums text-neutral-300">
-                        <div>
-                          <div>
-  Plan: <span className="text-neutral-100">{minutesToHours(planMin)} h</span>
-</div>
-
-                          Ist-Zeit: <span className="text-neutral-100">{minutesToHours(istMin)} h</span>
-                        </div>
-                        <div>
-                          Überzug: <span className="text-neutral-100">{minutesToHours(ueberzugMin)} h</span>{" "}
-                          <span className="text-xs text-neutral-500">({ueberzugMin} min)</span>
-                        </div>
-                        <div>
-                          Wert/Std:{" "}
-                          <span className={wph > 0 ? "text-neutral-100" : "text-neutral-500"}>
-                            {wph > 0 ? `${fmtMoney(wph)} €/h` : "—"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-sm tabular-nums">
-                      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-                        <div className="text-xs text-neutral-500">Ist Netto-VK</div>
-                        <div className="text-neutral-100">{fmtMoney(vkIst)} €</div>
-                      </div>
-                      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-                        <div className="text-xs text-neutral-500">Ist Material</div>
-                        <div className="text-neutral-100">{fmtMoney(matIst)} €</div>
-                      </div>
-                      <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
-                        <div className="text-xs text-neutral-500">Wertschöpfung</div>
-                        <div className="text-neutral-100">{fmtMoney(Math.max(0, vkIst) - Math.max(0, matIst))} €</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 text-xs text-neutral-500">
-                      Zugeordnet (operativ):{" "}
-                      <span className="text-neutral-300">{fmtName(proj?.zugeordnetAnId ?? "—")}</span>
-                    </div>
-
-                    {(() => {
-                      const byMitarbeiter = calcIstMinByProjekt(p.state, String(proj.id));
-                      const entries = Object.entries(byMitarbeiter).map(([mid, mins]) => ({
-                        mid,
-                        mins,
-                        sumMin: sumBereiche(mins),
-                      }));
-
-                      entries.sort((a, b) => b.sumMin - a.sumMin);
-
-                      if (entries.length === 0) {
-                        return (
-                          <div className="mt-2 text-xs text-neutral-600">
-                            Keine Arbeitsbuchungen für dieses Projekt gefunden.
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <details className="mt-3 rounded-2xl border border-neutral-800 bg-neutral-950 p-3">
-                          <summary className="cursor-pointer select-none text-sm text-neutral-200">
-                            Details: IST-Zeit je Mitarbeiter & Bereich
-                            <span className="text-neutral-500"> (aufklappen)</span>
-                          </summary>
-
-                          <div className="mt-3 grid grid-cols-1 gap-2">
-                            <div className="hidden md:grid md:grid-cols-6 gap-2 px-1 text-xs text-neutral-500">
-                              <div>Mitarbeiter</div>
-                              <div>Maschine</div>
-                              <div>Bank</div>
-                              <div>Lack</div>
-                              <div>Montage</div>
-                              <div>Summe</div>
-                            </div>
-                            {(() => {
-  const sum = entries.reduce(
-    (acc, e) => {
-      acc.maschine += e.mins.maschine || 0;
-      acc.bank += e.mins.bank || 0;
-      acc.lack += e.mins.lack || 0;
-      acc.montage += e.mins.montage || 0;
-      acc.total += e.sumMin || 0;
-      return acc;
-    },
-    { maschine: 0, bank: 0, lack: 0, montage: 0, total: 0 }
-  );
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm font-semibold tabular-nums">
-      <div>Summe</div>
-      <div>{minutesToHours(sum.maschine)} h</div>
-      <div>{minutesToHours(sum.bank)} h</div>
-      <div>{minutesToHours(sum.lack)} h</div>
-      <div>{minutesToHours(sum.montage)} h</div>
-      <div>{minutesToHours(sum.total)} h</div>
-    </div>
-  );
-})()}
-
-                            {entries.map((e) => (
-                              <div
-                                key={e.mid}
-                                className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center rounded-xl border border-neutral-800 bg-neutral-950 p-3 text-sm tabular-nums"
-                              >
-                                <div className="truncate">{mitarbeiterNameById.get(e.mid) ?? e.mid}</div>
-                                <div>{minutesToHours(e.mins.maschine)} h</div>
-                                <div>{minutesToHours(e.mins.bank)} h</div>
-                                <div>{minutesToHours(e.mins.lack)} h</div>
-                                <div>{minutesToHours(e.mins.montage)} h</div>
-                                <div>{minutesToHours(e.sumMin)} h</div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          </React.Fragment>
         ))
       )}
     </div>
