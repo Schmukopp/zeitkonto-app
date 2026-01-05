@@ -1,5 +1,5 @@
 // src/ui/Board.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { State } from "../core/timeStore";
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 import { DEFAULT_WOCHENMODELL, sollMinutenForIsoDate } from "../core/workModel";
@@ -391,6 +391,51 @@ const plannerMeisterId = canPlan ? String((selectedMitarbeiter as any)?.id) : ""
 
   const projects = (state as any)?.projects ?? [];
   const running = (state as any)?.running ?? null;
+    // ===== Viewport-Fit: Board automatisch skalieren (8 Wochen komplett sichtbar, inkl. Vollbild) =====
+const boardViewportRef = useRef<HTMLDivElement | null>(null);
+const boardContentRef = useRef<HTMLDivElement | null>(null);
+const [boardScale, setBoardScale] = useState<number>(1);
+
+useLayoutEffect(() => {
+  function recomputeScale() {
+    const vp = boardViewportRef.current;
+    const ct = boardContentRef.current;
+    if (!vp || !ct) return;
+
+    // verfügbare Fläche links (ohne Pool rechts)
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
+
+    // tatsächliche Inhaltsgröße (unskaliert)
+    const cw = ct.scrollWidth;
+    const ch = ct.scrollHeight;
+
+    if (vw <= 0 || vh <= 0 || cw <= 0 || ch <= 0) return;
+
+    // ✅ sowohl Breite als auch Höhe berücksichtigen
+    let s = Math.min(vw / cw, vh / ch);
+
+    // ✅ auch hochskalieren (damit Vollbild wirklich "größer" wirkt), aber begrenzen
+    const MAX = 1.35;
+    s = Math.max(0.5, Math.min(MAX, s));
+
+    setBoardScale(Math.round(s * 1000) / 1000);
+  }
+
+  recomputeScale();
+  window.addEventListener("resize", recomputeScale);
+
+  const ro = new ResizeObserver(() => recomputeScale());
+  if (boardViewportRef.current) ro.observe(boardViewportRef.current);
+  if (boardContentRef.current) ro.observe(boardContentRef.current);
+
+  return () => {
+    window.removeEventListener("resize", recomputeScale);
+    ro.disconnect();
+  };
+}, []);
+
+
 
   const meister = useMemo(() => {
   return (mitarbeiter ?? []).filter((m: any) => String((m as any)?.rolle ?? "geselle") === "meister");
@@ -830,41 +875,51 @@ const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) ==
 
     return { segs, lanes: Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, maxLaneUsed)) };
   }
+function hasOtherProjectBooking(rowId: string, iso: string, projectId: string): boolean {
+  // ✅ nutzt den vorhandenen Index empDayProjIdx (kein "buchungen" nötig)
+  const entries = empDayProjIdx.get(`${rowId}__${iso}`) ?? [];
+  return entries.some((e) => String(e.projektId) !== String(projectId) && (e.minuten ?? 0) > 0);
+}
 
   // ===== Plan-Linie mit Lücken =====
-  function hasOtherProjectBooking(rowId: string, iso: string, projectId: string): boolean {
-    const entries = empDayProjIdx.get(`${rowId}__${iso}`) ?? [];
-    return entries.some((e) => String(e.projektId) !== String(projectId) && (e.minuten ?? 0) > 0);
-  }
-
   function buildPlanOutlineSegments(p: BlockPart, rowId: string): Array<{ start: number; span: number }> {
-    const segs: Array<{ start: number; span: number }> = [];
+  const segs: Array<{ start: number; span: number }> = [];
 
-    let curStart: number | null = null;
-    let curLen = 0;
+  let curStart: number | null = null;
+  let curLen = 0;
 
-    for (let i = 0; i < p.span; i++) {
-      const iso = isoDate(dateForCol(p.weekRow, p.startCol + i));
-      const bookedThisProject = (projTotals.dayMin.get(`${p.projectId}__${iso}`) ?? 0) > 0;
+  for (let i = 0; i < p.span; i++) {
+    const iso = isoDate(dateForCol(p.weekRow, p.startCol + i));
+    const bookedThisProject = (projTotals.dayMin.get(`${p.projectId}__${iso}`) ?? 0) > 0;
 
-      const gap = !bookedThisProject && hasOtherProjectBooking(rowId, iso, p.projectId);
-      const visible = !gap;
+    // ✅ Fr/Sa sollen nur zählen, wenn es für dieses Projekt an dem Tag wirklich Buchungen gibt
+    const dow = parseIso(iso).getUTCDay(); // 0=So..6=Sa
+    const isFriOrSat = dow === 5 || dow === 6;
+    const gapBecauseWeekend = isFriOrSat && !bookedThisProject;
 
-      if (visible) {
-        if (curStart === null) curStart = i;
-        curLen++;
-      } else {
-        if (curStart !== null) {
-          segs.push({ start: curStart, span: curLen });
-          curStart = null;
-          curLen = 0;
-        }
+    // ✅ alte Regel bleibt: wenn ein anderes Projekt an dem Tag Buchungen hat,
+    // und dieses Projekt nicht → Lücke im Plan
+    const gapBecauseOther = !bookedThisProject && hasOtherProjectBooking(rowId, iso, p.projectId);
+
+    const gap = gapBecauseWeekend || gapBecauseOther;
+    const visible = !gap;
+
+    if (visible) {
+      if (curStart === null) curStart = i;
+      curLen++;
+    } else {
+      if (curStart !== null) {
+        segs.push({ start: curStart, span: curLen });
+        curStart = null;
+        curLen = 0;
       }
     }
-
-    if (curStart !== null) segs.push({ start: curStart, span: curLen });
-    return segs;
   }
+
+  if (curStart !== null) segs.push({ start: curStart, span: curLen });
+  return segs;
+}
+
 
   // ===== Status-Overlay =====
   function renderStatusOverlay(rowId: string, weekRow: 0 | 1, lanes: number) {
@@ -1084,15 +1139,18 @@ const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) ==
 
 
                   <div
-                    className={`relative ${draggingId && hoverRowId === String(rowId) ? "ring-2 ring-orange-500/70" : ""}`}
-                    style={{ width: totalGridWidthPx(), height: rowH }}
-                  >
-                    {/* Raster */}
+  className={`${draggingId && hoverRowId === String(rowId) ? "ring-2 ring-orange-500/70" : ""}`}
+  style={{ width: totalGridWidthPx(), height: rowH, position: "relative" }}
+>
+
+
+
+                   {/* Raster */}
 <div className="absolute inset-0">
   {/* Hintergrund (Fr/Sa dunkler) */}
   {Array.from({ length: COLS }).map((_, col) => {
     const d = dateForCol(weekRow, col);
-    const dow = d.getUTCDay(); // 0=So..6=Sa
+    const dow = d.getDay(); // lokal, UI-konsistent
     const isFriOrSat = dow === 5 || dow === 6;
 
     return (
@@ -1138,9 +1196,6 @@ const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) ==
     </div>
   ))}
 </div>
-
-
-
                     {/* Buchungen */}
                     {pack.segs.map((seg) => {
                       const topPx = PROJECT_BAND_H + seg.lane * BOOKING_LANE_H + 4;
@@ -1267,11 +1322,27 @@ const isMeisterRow = (rowId: string) => meister.some((m: any) => String(m.id) ==
   // ===============================
   return (
     <div className="flex w-full h-full overflow-hidden gap-3">
-      {/* ===== Board links ===== */}
-      <div className="flex-1 min-w-0 overflow-hidden flex flex-col gap-3">
-        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(0, topWeeks, scrollTopRef)}</div>
-        <div className="flex-1 min-h-0 overflow-hidden">{renderSection(1, bottomWeeks, scrollBottomRef)}</div>
+      {/* ===== Board links (AUTO-FIT SCALE) ===== */}
+<div className="flex-1 min-w-0 overflow-hidden">
+  <div
+    style={{
+      transform: `scale(${boardScale})`,
+      transformOrigin: "top left",
+      width: "fit-content",
+      height: "fit-content",
+    }}
+  >
+    <div className="flex flex-col gap-3">
+      <div className="overflow-hidden">
+        {renderSection(0, topWeeks, scrollTopRef)}
       </div>
+      <div className="overflow-hidden">
+        {renderSection(1, bottomWeeks, scrollBottomRef)}
+      </div>
+    </div>
+  </div>
+</div>
+
 
       {/* ===== Pool rechts ===== */}
       <div className="w-72 shrink-0 border border-neutral-800 rounded-2xl bg-neutral-950 overflow-hidden flex flex-col">
