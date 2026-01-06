@@ -52,9 +52,11 @@ export default function BoardV2(p: Props) {
     };
 
     recalc();
+
     const ro = new ResizeObserver(recalc);
     ro.observe(el);
     window.addEventListener("resize", recalc);
+
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", recalc);
@@ -86,10 +88,12 @@ export default function BoardV2(p: Props) {
   function renderHeader(sectionIdx: number, sectionStart: Date) {
     return (
       <div className="flex border-b border-neutral-800" style={{ height: layout.headerH }}>
+        {/* Name-Spalte (leer / Label) */}
         <div className="px-3 flex items-center text-sm text-neutral-300" style={{ width: NAME_COL_W }}>
           {sectionIdx === 0 ? "Board V2 (Layout)" : ""}
         </div>
 
+        {/* Grid */}
         <div className="relative" style={{ width: layout.totalGridW, height: layout.headerH }}>
           {/* KW Row */}
           <div className="absolute left-0 right-0 top-0" style={{ height: layout.kwRowH }}>
@@ -165,6 +169,7 @@ export default function BoardV2(p: Props) {
               </div>
 
               <div className="relative" style={{ width: layout.totalGridW, height: layout.rowH }}>
+                {/* nur Hintergrundraster, keine Buchungen */}
                 {Array.from({ length: layout.cols }).map((_, col) => {
                   const d = dateForCol(sectionStart, col);
                   const weekend = isFriOrSatLocal(d);
@@ -178,6 +183,11 @@ export default function BoardV2(p: Props) {
                     />
                   );
                 })}
+
+                {/* Platzhalter: „Canvas“ */}
+                <div className="absolute inset-0 pointer-events-none">
+                  <div className="h-full w-full opacity-0" />
+                </div>
               </div>
             </div>
           );
@@ -187,16 +197,19 @@ export default function BoardV2(p: Props) {
   }
 
   return (
+    // Für die Layout-Validierung erzwingen wir Vollbildhöhe (nur hier, V2).
     <div className="w-full overflow-hidden" style={{ height: "100vh" }}>
       <div className="flex w-full h-full overflow-hidden gap-3">
         {/* LEFT (Board) */}
         <div ref={leftRef} className="flex-1 min-w-0 overflow-hidden" style={{ height: "100vh" }}>
           <div className="flex flex-col gap-3">
+            {/* Section 1 */}
             <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
               {renderHeader(0, sectionStart0)}
               {renderRows(0, sectionStart0)}
             </div>
 
+            {/* Section 2 */}
             <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
               {renderHeader(1, sectionStart1)}
               {renderRows(1, sectionStart1)}
