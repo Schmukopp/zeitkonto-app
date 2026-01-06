@@ -8,6 +8,7 @@ import Zeitstrahlen from "./ui/Zeitstrahlen";
 import ProjektAbschluss from "./ui/ProjektAbschluss";
 import SettingsDrawer from "./ui/SettingsDrawer";
 import Board from "./ui/Board";
+import BoardV2 from "./ui/BoardV2";
 
 import { loadState } from "./core/timeStore";
 import type { State } from "./core/timeStore";
@@ -35,7 +36,7 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
-type Tab = "zeit" | "woche" | "board" | "zeitstrahl" | "abschluss" | "archiv" | "statistik" | "admin";
+type Tab = "zeit" | "woche" | "board" | "boardv2" | "zeitstrahl" | "abschluss" | "archiv" | "statistik" | "admin";
 
 
 const LS_ACTIVE_BOOKING = "orgaboard.activeBookingProjektId.v1";
@@ -199,6 +200,10 @@ export default function App() {
               <button className={tab === "board" ? btnActive : btn} onClick={() => setTab("board")}>
                 Board
               </button>
+              <button className={tab === "boardv2" ? btnActive : btn} onClick={() => setTab("boardv2")}>
+  Board V2
+</button>
+
               <button className={tab === "zeitstrahl" ? btnActive : btn} onClick={() => setTab("zeitstrahl")}>
                 Zeitstrahl
               </button>
@@ -234,8 +239,14 @@ export default function App() {
         settings={settings}
         setSettings={setSettings}
       />
+<div
+  className={
+    tab === "board" || tab === "boardv2"
+      ? "mx-auto max-w-none px-2 pt-20 pb-6"
+      : "mx-auto max-w-6xl px-4 pt-20 pb-6"
+  }
+>
 
-      <div className={tab === "board" ? "mx-auto max-w-none px-2 pt-20 pb-6" : "mx-auto max-w-6xl px-4 pt-20 pb-6"}>
 
         {tab === "admin" ? (
           <div className="flex flex-col gap-3">
@@ -254,7 +265,8 @@ export default function App() {
               setTab("zeit");
             }}
           />
-          
+          ) : tab === "boardv2" ? (
+  <BoardV2 state={state} setState={setState} ms={ms} />
                 ) : tab === "zeitstrahl" ? (
           <Zeitstrahlen {...({ state, setState, ms, settings } as any)} />
         ) : tab === "statistik" ? (
