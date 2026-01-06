@@ -1,6 +1,7 @@
 // src/ui/BoardV2.tsx
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { State } from "../core/timeStore";
+import { saveState, type State } from "../core/timeStore";
+
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 import {
   buildBoardV2Layout,
@@ -12,12 +13,16 @@ import {
   addDays,
 } from "./BoardV2Layout";
 
+
 /**
- * Board V2 – Schritt 1:
+ * Board V2 – Schritt 2:
  * - Layout-Engine Vollbild (2×4 Wochen)
- * - Minimal: Projekt-Planblöcke anzeigen
- * - Fr/Sa werden im Plan unterbrochen, wenn an diesem Tag für DAS Projekt keine Buchungen existieren
- * - KEIN Drag&Drop, KEINE Buchungs-Segmente (nur Plan-Outline)
+ * - Planblöcke anzeigen + Fr/Sa-Lücken ohne Buchung
+ * - ✅ Drag&Drop + Pool rechts
+ *   - Drag aus Pool → Drop auf Mitarbeiter/Tag (nur Sektion 0)
+ *   - Drag im Board → anderes Feld (nur Sektion 0)
+ *   - Drag zurück in Pool → Layout entfernen
+ *   - Shift beim Drop toggelt Lane (0/1)
  */
 
 type Props = {
@@ -43,7 +48,6 @@ function safeNumber(v: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// YYYY-MM-DD aus lokalem Date (stabil für UI + Keys)
 function isoFromLocalDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -75,7 +79,7 @@ type BlockPart = {
 };
 
 export default function BoardV2(p: Props) {
-  const { state, ms } = p;
+  const { state, setState, ms } = p;
 
   const mitarbeiterAll = ms.mitarbeiter ?? [];
   const mitarbeiter = useMemo(() => {
@@ -109,7 +113,7 @@ export default function BoardV2(p: Props) {
     };
   }, []);
 
-  // 8-Wochen-Fenster (2×4 Wochen) – wie bisher: 1 Woche zurück starten
+  // 8-Wochen-Fenster: 1 Woche zurück starten
   const baseMonday = useMemo(() => startOfISOWeekLocal(new Date()), []);
   const sectionStart0 = useMemo(() => addDays(baseMonday, -7), [baseMonday]);
   const sectionStart1 = useMemo(() => addDays(sectionStart0, 4 * 7), [sectionStart0]);
@@ -174,19 +178,146 @@ export default function BoardV2(p: Props) {
     return arr.filter((p) => p && p?.status !== "archiv" && p?.active !== false);
   }, [state]);
 
+  const poolProjects = useMemo(() => {
+    return (activeProjects as any[]).filter((p: any) => !layoutMap[String(p?.id ?? "")]);
+  }, [activeProjects, layoutMap]);
+
+  const boardProjects = useMemo(() => {
+    return (activeProjects as any[]).filter((p: any) => !!layoutMap[String(p?.id ?? "")]);
+  }, [activeProjects, layoutMap]);
+
+  const projectById = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const p of (state as any)?.projects ?? []) m.set(String((p as any)?.id ?? ""), p);
+    return m;
+  }, [state]);
+
+  // ====== Drag&Drop State ======
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [hoverRowId, setHoverRowId] = useState<string | null>(null);
+  const [hoverPool, setHoverPool] = useState<boolean>(false);
+
+  function clearDnDHovers() {
+    setHoverRowId(null);
+    setHoverPool(false);
+  }
+
+    function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
+    setState((s) => {
+      const next = structuredClone(s) as any;
+
+      if (!next.boardLayout) next.boardLayout = {};
+      next.boardLayout[String(projectId)] = nextPos;
+
+      // ✅ Zuordnung ins Projekt schreiben (Nachvollziehbarkeit / Statistik)
+      const pid = String(projectId);
+      const rowId = String(nextPos.rowId);
+
+      if (Array.isArray(next.projects)) {
+        const idx = next.projects.findIndex((pp: any) => String(pp?.id) === pid);
+        if (idx >= 0) {
+          const proj = next.projects[idx];
+          next.projects[idx] = { ...proj, zugeordnetAnId: rowId };
+        }
+      }
+
+      // ✅ Persistieren (sonst verliert Reload das Layout)
+      saveState(next as any);
+
+      return next;
+    });
+  }
+
+
+    function removeFromLayout(projectId: string) {
+    setState((s) => {
+      const next = structuredClone(s) as any;
+
+      // 1) Layout löschen
+      if (next.boardLayout) {
+        delete next.boardLayout[String(projectId)];
+      }
+
+      // 2) Zuordnung im Projekt leeren (sonst "klebt" es logisch)
+      const pid = String(projectId);
+      if (Array.isArray(next.projects)) {
+        const idx = next.projects.findIndex((pp: any) => String(pp?.id) === pid);
+        if (idx >= 0) {
+          const proj = next.projects[idx];
+          next.projects[idx] = { ...proj, zugeordnetAnId: undefined };
+        }
+      }
+      saveState(next as any);
+      return next;
+    });
+  }
+
+
+  function onDragStart(e: React.DragEvent, projectId: string) {
+    setDraggingId(projectId);
+    clearDnDHovers();
+
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(projectId));
+
+    const pos = layoutMap[String(projectId)];
+    const lane = clamp(Number(pos?.lane ?? 0), 0, 1);
+    e.dataTransfer.setData("application/x-orgaboard-lane", String(lane));
+  }
+
+  function onDragEnd() {
+    setDraggingId(null);
+    clearDnDHovers();
+  }
+
+  function onDropOnCell(
+    e: React.DragEvent,
+    target: { rowId: string; sectionIdx: 0 | 1; col: number }
+  ) {
+    e.preventDefault();
+
+    const projectId = e.dataTransfer.getData("text/plain");
+    if (!projectId) return;
+
+    // ✅ wie V1: nur oben einplanen (Sektion 0)
+    if (target.sectionIdx !== 0) return;
+
+    const rowId = String(target.rowId);
+    const col = clamp(target.col, 0, layout.cols - 1);
+
+    const draggedLaneRaw = e.dataTransfer.getData("application/x-orgaboard-lane");
+    let lane = clamp(Number(draggedLaneRaw || 0), 0, 1);
+
+    if ((e as any).shiftKey) lane = lane === 0 ? 1 : 0;
+
+    // Lane-Kollision: falls Lane belegt, wechsle auf freie Lane
+    const partsTop = blockParts.filter((bp) => bp.sectionIdx === 0);
+
+    const laneOccupied = (testLane: number) =>
+      partsTop.some(
+        (bp) =>
+          String(bp.rowId) === rowId &&
+          clamp(Number(bp.lane ?? 0), 0, 1) === testLane &&
+          col >= bp.startCol &&
+          col < bp.startCol + bp.span
+      );
+
+    if (laneOccupied(lane) && !laneOccupied(lane === 0 ? 1 : 0)) lane = lane === 0 ? 1 : 0;
+
+    saveLayout(projectId, { rowId, startCol: col, lane });
+
+    setDraggingId(null);
+    clearDnDHovers();
+  }
+
   // ====== Block-Spans (einfach & stabil) ======
   function calcSpanColsFromStart(projectId: string, startDate: Date, minutesTarget: number): number {
-    // Ziel: grobe Planlänge über Tage schätzen.
-    // Wir wollen hier NICHT die komplette V1-Logik replizieren.
-    // Rule:
-    // - pro Werktag (Mo–Do) 600min Kapazität
-    // - Fr/Sa zählen nur, wenn Buchungen existieren (sonst "Lücke" / keine Kapazität)
     if (minutesTarget <= 0) return 1;
 
     let remain = minutesTarget;
     let span = 0;
 
-    const MAX = 24 * 2; // maximal über 2 Sektionen
+    const MAX = 24 * 2; // max 2 Sektionen
     for (let i = 0; i < MAX; i++) {
       const d = addDays(startDate, i);
       const iso = isoFromLocalDate(d);
@@ -194,12 +325,10 @@ export default function BoardV2(p: Props) {
 
       const isFriSat = isFriOrSatLocal(d);
       if (isFriSat && !bookedThisProject) {
-        // zählt als "Zeit vergeht", aber keine Kapazität (Plan wird unterbrochen)
         span++;
         continue;
       }
 
-      // einfache Kapazität
       const cap = 600;
       const take = Math.min(remain, cap);
       remain -= take;
@@ -215,7 +344,7 @@ export default function BoardV2(p: Props) {
   const blocks: Block[] = useMemo(() => {
     const out: Block[] = [];
 
-    for (const p of activeProjects as any[]) {
+    for (const p of boardProjects as any[]) {
       const pid = String(p?.id ?? "");
       if (!pid) continue;
 
@@ -230,7 +359,7 @@ export default function BoardV2(p: Props) {
 
       const planMin = Math.max(0, Math.round((safeNumber(p?.kalkStunden) || 0) * 60));
       const bookedMin = projectTotalMin.get(pid) ?? 0;
-      const minutesTarget = Math.max(planMin, bookedMin, 60); // min 1 Tag
+      const minutesTarget = Math.max(planMin, bookedMin, 60);
 
       const startDate = dateForCol(sectionStart0, startColTop);
       const spanCols = calcSpanColsFromStart(pid, startDate, minutesTarget);
@@ -246,9 +375,9 @@ export default function BoardV2(p: Props) {
     }
 
     return out;
-  }, [activeProjects, layoutMap, projectTotalMin, sectionStart0, projectDayMin, layout.cols]);
+  }, [boardProjects, layoutMap, projectTotalMin, sectionStart0, projectDayMin, layout.cols]);
 
-  // ====== Wrap auf 2 Sektionen (oben/unten) ======
+  // ====== Wrap auf 2 Sektionen ======
   function splitBlock(b: Block): BlockPart[] {
     const parts: BlockPart[] = [];
 
@@ -403,10 +532,12 @@ export default function BoardV2(p: Props) {
 
           const rowParts = blockParts.filter((bp) => bp.sectionIdx === sectionIdx && String(bp.rowId) === empId);
 
+          const rowRing = draggingId && hoverRowId === empId ? "ring-2 ring-orange-500/70" : "";
+
           return (
             <div
               key={`r-${sectionIdx}-${empId}`}
-              className="flex border-b border-neutral-800"
+              className={`flex border-b border-neutral-800 ${rowRing}`}
               style={{ height: layout.rowH }}
             >
               <div className="px-3 flex items-center text-sm truncate" style={{ width: NAME_COL_W }} title={empName}>
@@ -429,10 +560,36 @@ export default function BoardV2(p: Props) {
                   );
                 })}
 
+                {/* ✅ Drop-Zonen (nur Sektion 0) – liegen ÜBER Raster */}
+                {sectionIdx === 0
+                  ? Array.from({ length: layout.cols }).map((_, col) => (
+                      <div
+                        key={`drop-${empId}-${col}`}
+                        className="absolute top-0"
+                        style={{ left: colLeft(col), width: colW(col), height: PROJECT_BAND_H }}
+                        onDragOver={(e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setHoverPool(true);
+  setHoverRowId(null);
+}}
+
+                        onDragEnter={() => {
+                          setHoverRowId(empId);
+                          setHoverPool(false);
+                        }}
+                        onDrop={(e) => onDropOnCell(e, { rowId: empId, sectionIdx: 0, col })}
+                        title="Hierhin ziehen = Projekt einplanen (Shift = Lane wechseln)"
+                      />
+                    ))
+                  : null}
+
                 {/* Projektspur: Plan-Outline (mit Lücken Fr/Sa ohne Buchung) */}
                 {rowParts.map((part) => {
                   const segs = buildPlanOutlineSegments(part, sectionStart);
                   if (segs.length === 0) return null;
+
+                  const isDraggingThis = draggingId === part.projectId;
 
                   return (
                     <React.Fragment key={part.key}>
@@ -449,14 +606,22 @@ export default function BoardV2(p: Props) {
                         const topPx = 2 + lane * PROJECT_LANE_H;
                         const h = PROJECT_LANE_H - 4;
 
-                        const title = `${part.name}\nProjektId: ${part.projectId}`;
+                        const proj = projectById.get(String(part.projectId));
+                        const title = `${part.name}\nProjektId: ${part.projectId}\nZuordnung: ${String(
+                          (proj as any)?.zugeordnetAnId ?? "-"
+                        )}`;
 
                         const showLabel = w >= 140;
 
                         return (
                           <div
                             key={`${part.key}__seg_${idx}`}
-                            className="absolute z-20 rounded-lg border border-orange-500/80 overflow-hidden select-none"
+                            draggable
+                            onDragStart={(e) => onDragStart(e, part.projectId)}
+                            onDragEnd={onDragEnd}
+                            className={`absolute z-20 rounded-lg border overflow-hidden select-none cursor-grab active:cursor-grabbing ${
+                              isDraggingThis ? "border-orange-500 bg-neutral-900 opacity-70" : "border-orange-500/80"
+                            }`}
                             style={{ top: topPx, left: leftPx, width: w, height: h }}
                             title={title}
                           >
@@ -485,8 +650,7 @@ export default function BoardV2(p: Props) {
     );
   }
 
-  return (
-    // Vollbildhöhe erzwingen (nur V2)
+    return (
     <div className="w-full overflow-hidden" style={{ height: "100vh" }}>
       <div className="flex w-full h-full overflow-hidden gap-3">
         {/* LEFT (Board) */}
@@ -506,18 +670,58 @@ export default function BoardV2(p: Props) {
           </div>
         </div>
 
-        {/* RIGHT (Pool placeholder) */}
+        {/* RIGHT (Pool) */}
         <div
-          className="shrink-0 border-l border-neutral-800 bg-neutral-950 p-3 overflow-y-auto"
+          className={`shrink-0 border-l border-neutral-800 bg-neutral-950 p-3 overflow-y-auto ${
+            draggingId && hoverPool ? "ring-2 ring-orange-500/70 ring-inset" : ""
+          }`}
           style={{ width: POOL_W, height: "100vh" }}
+          title="Hierhin ziehen = Projekt aus dem Board entfernen"
+          onDragOver={(e) => {
+            e.preventDefault();
+            setHoverPool(true);
+            setHoverRowId(null);
+          }}
+          onDragLeave={() => setHoverPool(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const pid = e.dataTransfer.getData("text/plain");
+            if (!pid) return;
+
+            removeFromLayout(pid);
+
+            setDraggingId(null);
+            setHoverPool(false);
+            clearDnDHovers();
+          }}
         >
-          <div className="text-xs text-neutral-400">Projekt-Pool (V2 Platzhalter)</div>
-          <div className="text-[11px] text-neutral-600 mt-2">
-            Später: Pool + Drag&Drop. Jetzt: Layout + Plan-Lücken validieren.
+          <div className="text-xs text-neutral-400">Projekt-Pool</div>
+          <div className="text-[11px] text-neutral-600 mt-1">
+            Drop hierhin, um ein Projekt aus dem Board zu entfernen.
           </div>
 
-          <div className="mt-4 rounded-xl border border-dashed border-neutral-700 bg-neutral-950 px-3 py-3 text-sm text-neutral-400">
-            Drop-Zone (später)
+          <div className="mt-3 space-y-2">
+            {poolProjects.length === 0 ? (
+              <div className="text-xs text-neutral-500 p-2">Alle aktiven Projekte sind eingeplant.</div>
+            ) : (
+              poolProjects.map((pp: any) => (
+                <div
+                  key={String(pp?.id ?? "")}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, String(pp.id))}
+                  onDragEnd={onDragEnd}
+                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-2 cursor-grab active:cursor-grabbing"
+                  title="Ins Board ziehen: auf einen Mitarbeiter droppen"
+                >
+                  <div className="text-xs font-medium text-neutral-100 truncate">
+                    {String(pp?.name ?? "Ohne Name")}
+                  </div>
+                  <div className="text-[10px] text-neutral-500 mt-0.5">ID: {String(pp?.id ?? "")}</div>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="mt-6 text-[11px] text-neutral-600">
@@ -532,6 +736,7 @@ export default function BoardV2(p: Props) {
               blocks: <span className="text-neutral-300">{blocks.length}</span> · parts:{" "}
               <span className="text-neutral-300">{blockParts.length}</span>
             </div>
+            <div className="mt-1">Tipp: Shift beim Drop toggelt Lane.</div>
           </div>
         </div>
       </div>
