@@ -469,6 +469,8 @@ export default function BoardV2(p: Props) {
           {/* KW Row */}
           <div className="absolute left-0 right-0 top-0" style={{ height: layout.kwRowH }}>
             {Array.from({ length: layout.weeksPerSection }).map((_, wi) => {
+              const isCurrentKw = sectionIdx === 0 && wi === 1;
+
               const weekStart = addDays(sectionStart, wi * 7);
               const kw = isoWeekNumberLocal(weekStart);
 
@@ -481,10 +483,17 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`kw-${sectionIdx}-${wi}`}
-                  className="absolute border-r border-neutral-700/60 bg-neutral-950"
+                  className={`absolute border-r border-neutral-700 ${
+  isCurrentKw ? "bg-orange-400 border-orange-500" : "bg-neutral-950"
+}`}
+
                   style={{ left, width, height: layout.kwRowH }}
                 >
-                  <div className="h-full flex items-center justify-center text-xs text-neutral-400">
+                  <div
+  className={`h-full flex items-center justify-center text-xs font-bold ${
+    isCurrentKw ? "text-200" : "text-neutral-400"
+  }`}
+>
                     KW {kw}
                   </div>
                 </div>
@@ -555,20 +564,32 @@ export default function BoardV2(p: Props) {
 
               <div className="relative" style={{ width: layout.totalGridW, height: layout.rowH }}>
                 {/* Hintergrundraster */}
-                {Array.from({ length: layout.cols }).map((_, col) => {
-                  const d = dateForCol(sectionStart, col);
-                  const weekend = isFriOrSatLocal(d);
-                  return (
-                    <div
-  key={`bg-${sectionIdx}-${empId}-${col}`}
-  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 ${
-    weekend ? "bg-neutral-900/70" : "bg-neutral-950"
-  }`}
-  style={{ left: colLeft(col), width: colW(col) }}
-/>
+{Array.from({ length: layout.cols }).map((_, col) => {
+  const d = dateForCol(sectionStart, col);
+  const weekend = isFriOrSatLocal(d);
 
-                  );
-                })}
+  // ✅ Heute erkennen (lokales Datum)
+  const isToday = isoFromLocalDate(d) === isoFromLocalDate(new Date());
+
+  return (
+    <div
+      key={`bg-${sectionIdx}-${empId}-${col}`}
+      className={`absolute top-0 bottom-0 ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"} ${
+        isToday ? "bg-neutral-950/90" : ""
+      }`}
+      style={{ left: colLeft(col), width: colW(col) }}
+    >
+      {/* ✅ Vertikale Grid-Linie rechts (besser sichtbar als border) */}
+      <div className="absolute right-0 top-0 bottom-0 w-px bg-neutral-600/80" />
+
+      {/* ✅ Heute-Markierung: dünne orange Linie links im Feld */}
+      {isToday ? <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-orange-500/60" /> : null}
+    </div>
+  );
+})}
+
+{/* ✅ Horizontale Grid-Linie pro Zeile (im schwarzen Bereich sichtbar) */}
+<div className="absolute left-0 right-0 bottom-0 h-px bg-neutral-600/80 pointer-events-none" />
 
                 {/* ✅ Drop-Zonen (nur Sektion 0) – liegen ÜBER Raster */}
                 {sectionIdx === 0
