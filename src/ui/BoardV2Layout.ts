@@ -20,7 +20,7 @@ export type BoardV2Layout = {
 
   rowH: number;
 
-  gridW: number;
+  gridW: number; // NUR die Grid-Breite (ohne Name-Spalte)
   colWidths: number[];
   colLefts: number[];
   totalGridW: number;
@@ -51,7 +51,9 @@ export function buildBoardV2Layout(inp: BoardV2LayoutInput): BoardV2Layout {
   const employeeCount = Math.max(1, Math.floor(inp.employeeCount || 1));
 
   // Ziel: Keine vertikale Scrollbar im LEFT Board-Bereich.
+  // Wir rechnen NUR mit dem verfügbaren viewportH (das muss korrekt gemessen werden).
   const paddingSafety = 18;
+
   const availableRowsH = Math.max(
     260,
     Math.floor(inp.viewportH) - headerH * sections - sectionGap - paddingSafety
@@ -63,8 +65,9 @@ export function buildBoardV2Layout(inp: BoardV2LayoutInput): BoardV2Layout {
   const sectionBoxH = headerH + employeeCount * rowH;
   const totalBoardH = sectionBoxH * sections + sectionGap;
 
-  // Grid-Breite = volle Breite des linken Bereichs
-  const gridW = Math.max(600, Math.floor(inp.viewportW || 0));
+  // ✅ KRITISCH: Grid-Breite ist viewportW MINUS Name-Spalte.
+  // Sonst wird rechts (Fr/Sa) abgeschnitten, weil Name+Grid breiter als viewport ist.
+  const gridW = Math.max(520, Math.floor((inp.viewportW || 0) - nameColW));
 
   const { colWidths, colLefts, totalW } = buildCols(gridW, cols);
 

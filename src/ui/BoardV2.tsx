@@ -13,7 +13,6 @@ import {
   addDays,
 } from "./BoardV2Layout";
 
-
 /**
  * Board V2 – Schritt 2:
  * - Layout-Engine Vollbild (2×4 Wochen)
@@ -170,7 +169,60 @@ export default function BoardV2(p: Props) {
     return m;
   }, [projectDayMin]);
 
-  // ====== Layout aus State ziehen (V1-Layout weiterverwenden) ======
+  // ====== Index: Buchungen pro Mitarbeiter/Tag (Minuten, nur Arbeit) ======
+  const employeeDayMin = useMemo(() => {
+    const m = new Map<string, number>(); // key: `${mid}__${iso}`
+    const arr: any[] = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
+
+    for (const b of arr) {
+      if (!b || typeof b !== "object") continue;
+      if (String(b?.art ?? "") !== "arbeit") continue;
+
+      const mid = String(b?.mitarbeiterId ?? "").trim();
+      if (!mid) continue;
+
+      const iso = String(b?.datum ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) continue;
+
+      const min = Math.max(0, Math.round(safeNumber(b?.minuten) || 0));
+      if (min <= 0) continue;
+
+      const key = `${mid}__${iso}`;
+      m.set(key, (m.get(key) ?? 0) + min);
+    }
+
+    return m;
+  }, [state]);
+
+  // ====== Index: Buchungen pro Mitarbeiter/Tag/Bereich (Minuten, nur Arbeit) ======
+  const employeeDayAreaMin = useMemo(() => {
+    const m = new Map<string, number>(); // key: `${mid}__${iso}__${bereich}`
+    const arr: any[] = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
+
+    for (const b of arr) {
+      if (!b || typeof b !== "object") continue;
+      if (String(b?.art ?? "") !== "arbeit") continue;
+
+      const mid = String(b?.mitarbeiterId ?? "").trim();
+      if (!mid) continue;
+
+      const iso = String(b?.datum ?? "").slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) continue;
+
+      const bereich = String(b?.bereich ?? "").trim();
+      if (!bereich) continue;
+
+      const min = Math.max(0, Math.round(safeNumber(b?.minuten) || 0));
+      if (min <= 0) continue;
+
+      const key = `${mid}__${iso}__${bereich}`;
+      m.set(key, (m.get(key) ?? 0) + min);
+    }
+
+    return m;
+  }, [state]);
+
+  // ====== Layout aus State ziehen ======
   const layoutMap: LayoutMap = (((state as any)?.boardLayout ?? {}) as any) || {};
 
   const activeProjects = useMemo(() => {
@@ -202,14 +254,13 @@ export default function BoardV2(p: Props) {
     setHoverPool(false);
   }
 
-    function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
+  function saveLayout(projectId: string, nextPos: { rowId: string; startCol: number; lane: number }) {
     setState((s) => {
       const next = structuredClone(s) as any;
 
       if (!next.boardLayout) next.boardLayout = {};
       next.boardLayout[String(projectId)] = nextPos;
 
-      // ✅ Zuordnung ins Projekt schreiben (Nachvollziehbarkeit / Statistik)
       const pid = String(projectId);
       const rowId = String(nextPos.rowId);
 
@@ -221,24 +272,17 @@ export default function BoardV2(p: Props) {
         }
       }
 
-      // ✅ Persistieren (sonst verliert Reload das Layout)
       saveState(next as any);
-
       return next;
     });
   }
 
-
-    function removeFromLayout(projectId: string) {
+  function removeFromLayout(projectId: string) {
     setState((s) => {
       const next = structuredClone(s) as any;
 
-      // 1) Layout löschen
-      if (next.boardLayout) {
-        delete next.boardLayout[String(projectId)];
-      }
+      if (next.boardLayout) delete next.boardLayout[String(projectId)];
 
-      // 2) Zuordnung im Projekt leeren (sonst "klebt" es logisch)
       const pid = String(projectId);
       if (Array.isArray(next.projects)) {
         const idx = next.projects.findIndex((pp: any) => String(pp?.id) === pid);
@@ -251,7 +295,6 @@ export default function BoardV2(p: Props) {
       return next;
     });
   }
-
 
   function onDragStart(e: React.DragEvent, projectId: string) {
     setDraggingId(projectId);
@@ -270,16 +313,12 @@ export default function BoardV2(p: Props) {
     clearDnDHovers();
   }
 
-  function onDropOnCell(
-    e: React.DragEvent,
-    target: { rowId: string; sectionIdx: 0 | 1; col: number }
-  ) {
+  function onDropOnCell(e: React.DragEvent, target: { rowId: string; sectionIdx: 0 | 1; col: number }) {
     e.preventDefault();
 
     const projectId = e.dataTransfer.getData("text/plain");
     if (!projectId) return;
 
-    // ✅ wie V1: nur oben einplanen (Sektion 0)
     if (target.sectionIdx !== 0) return;
 
     const rowId = String(target.rowId);
@@ -290,7 +329,6 @@ export default function BoardV2(p: Props) {
 
     if ((e as any).shiftKey) lane = lane === 0 ? 1 : 0;
 
-    // Lane-Kollision: falls Lane belegt, wechsle auf freie Lane
     const partsTop = blockParts.filter((bp) => bp.sectionIdx === 0);
 
     const laneOccupied = (testLane: number) =>
@@ -310,14 +348,13 @@ export default function BoardV2(p: Props) {
     clearDnDHovers();
   }
 
-  // ====== Block-Spans (einfach & stabil) ======
   function calcSpanColsFromStart(projectId: string, startDate: Date, minutesTarget: number): number {
     if (minutesTarget <= 0) return 1;
 
     let remain = minutesTarget;
     let span = 0;
 
-    const MAX = 24 * 2; // max 2 Sektionen
+    const MAX = 24 * 2;
     for (let i = 0; i < MAX; i++) {
       const d = addDays(startDate, i);
       const iso = isoFromLocalDate(d);
@@ -340,7 +377,6 @@ export default function BoardV2(p: Props) {
     return Math.max(1, span);
   }
 
-  // ====== Blocks bauen (nur Projekte, die im Layout stehen) ======
   const blocks: Block[] = useMemo(() => {
     const out: Block[] = [];
 
@@ -377,7 +413,6 @@ export default function BoardV2(p: Props) {
     return out;
   }, [boardProjects, layoutMap, projectTotalMin, sectionStart0, projectDayMin, layout.cols]);
 
-  // ====== Wrap auf 2 Sektionen ======
   function splitBlock(b: Block): BlockPart[] {
     const parts: BlockPart[] = [];
 
@@ -417,11 +452,7 @@ export default function BoardV2(p: Props) {
 
   const blockParts: BlockPart[] = useMemo(() => blocks.flatMap(splitBlock), [blocks]);
 
-  // ====== Plan-Outline: Segmente mit Lücken (Fr/Sa ohne Buchung => Lücke) ======
-  function buildPlanOutlineSegments(
-    part: BlockPart,
-    sectionStart: Date
-  ): Array<{ start: number; span: number }> {
+  function buildPlanOutlineSegments(part: BlockPart, sectionStart: Date): Array<{ start: number; span: number }> {
     const segs: Array<{ start: number; span: number }> = [];
 
     let curStart: number | null = null;
@@ -458,15 +489,11 @@ export default function BoardV2(p: Props) {
   function renderHeader(sectionIdx: number, sectionStart: Date) {
     return (
       <div className="flex border-b border-neutral-800" style={{ height: layout.headerH }}>
-        {/* Name-Spalte */}
-       <div className="px-3 flex items-center text-lg font-bold text-neutral-900 tracking-tight" style={{ width: NAME_COL_W }}>
-
+        <div className="px-3 flex items-center text-lg font-bold text-neutral-900 tracking-tight" style={{ width: NAME_COL_W }}>
           {sectionIdx === 0 ? "Board V2" : ""}
         </div>
 
-        {/* Grid */}
         <div className="relative" style={{ width: layout.totalGridW, height: layout.headerH }}>
-          {/* KW Row */}
           <div className="absolute left-0 right-0 top-0" style={{ height: layout.kwRowH }}>
             {Array.from({ length: layout.weeksPerSection }).map((_, wi) => {
               const isCurrentKw = sectionIdx === 0 && wi === 1;
@@ -483,17 +510,10 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`kw-${sectionIdx}-${wi}`}
-                  className={`absolute border-r border-neutral-700 ${
-  isCurrentKw ? "bg-orange-400 border-orange-500" : "bg-neutral-950"
-}`}
-
+                  className={`absolute border-r border-neutral-700 ${isCurrentKw ? "bg-orange-400 border-orange-500" : "bg-neutral-950"}`}
                   style={{ left, width, height: layout.kwRowH }}
                 >
-                  <div
-  className={`h-full flex items-center justify-center text-xs font-bold ${
-    isCurrentKw ? "text-200" : "text-neutral-400"
-  }`}
->
+                  <div className={`h-full flex items-center justify-center text-xs font-bold ${isCurrentKw ? "text-neutral-900" : "text-neutral-400"}`}>
                     KW {kw}
                   </div>
                 </div>
@@ -501,7 +521,6 @@ export default function BoardV2(p: Props) {
             })}
           </div>
 
-          {/* Day Row */}
           <div className="absolute left-0 right-0" style={{ top: layout.kwRowH, height: layout.dayRowH }}>
             {Array.from({ length: layout.cols }).map((_, col) => {
               const d = dateForCol(sectionStart, col);
@@ -512,15 +531,11 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`d-${sectionIdx}-${col}`}
-                  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 text-center ${
-                    weekend ? "bg-neutral-900/70" : "bg-neutral-950"
-                  }`}
+                  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 text-center ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"}`}
                   style={{ left, width }}
                   title={isoDateLocal(d)}
                 >
-                  <div className="text-[11px] text-neutral-300 leading-5">
-                    {["Mo", "Di", "Mi", "Do", "Fr", "Sa"][col % 6]}
-                  </div>
+                  <div className="text-[11px] text-neutral-300 leading-5">{["Mo", "Di", "Mi", "Do", "Fr", "Sa"][col % 6]}</div>
                   <div className="text-[10px] text-neutral-500 leading-4">
                     {String(d.getDate()).padStart(2, "0")}.{String(d.getMonth() + 1).padStart(2, "0")}
                   </div>
@@ -541,57 +556,34 @@ export default function BoardV2(p: Props) {
           const empId = String(m?.id ?? "");
 
           const rowParts = blockParts.filter((bp) => bp.sectionIdx === sectionIdx && String(bp.rowId) === empId);
-
           const rowRing = draggingId && hoverRowId === empId ? "ring-2 ring-orange-500/70" : "";
 
           return (
-            <div
-  key={`r-${sectionIdx}-${empId}`}
-  className={`flex border-b border-neutral-800 ${rowRing}`}
-  style={{ height: layout.rowH }}
->
-
-              <div
-  className="px-3 flex items-center text-sm truncate bg-neutral-400/70 border-r border-neutral-300"
-  style={{ width: NAME_COL_W }}
-  title={empName}
->
-
+            <div key={`r-${sectionIdx}-${empId}`} className={`flex border-b border-neutral-800 ${rowRing}`} style={{ height: layout.rowH }}>
+              <div className="px-3 flex items-center text-sm truncate bg-neutral-400/70 border-r border-neutral-300" style={{ width: NAME_COL_W }} title={empName}>
                 <div className="min-w-0 truncate text-neutral-900 font-bold">{empName}</div>
-
-
               </div>
 
               <div className="relative" style={{ width: layout.totalGridW, height: layout.rowH }}>
-                {/* Hintergrundraster */}
-{Array.from({ length: layout.cols }).map((_, col) => {
-  const d = dateForCol(sectionStart, col);
-  const weekend = isFriOrSatLocal(d);
+                {Array.from({ length: layout.cols }).map((_, col) => {
+                  const d = dateForCol(sectionStart, col);
+                  const weekend = isFriOrSatLocal(d);
+                  const isToday = isoFromLocalDate(d) === isoFromLocalDate(new Date());
 
-  // ✅ Heute erkennen (lokales Datum)
-  const isToday = isoFromLocalDate(d) === isoFromLocalDate(new Date());
+                  return (
+                    <div
+                      key={`bg-${sectionIdx}-${empId}-${col}`}
+                      className={`absolute top-0 bottom-0 ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"} ${isToday ? "bg-neutral-950/90" : ""}`}
+                      style={{ left: colLeft(col), width: colW(col) }}
+                    >
+                      <div className="absolute right-0 top-0 bottom-0 w-px bg-neutral-600/80" />
+                      {isToday ? <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-orange-500/60" /> : null}
+                    </div>
+                  );
+                })}
 
-  return (
-    <div
-      key={`bg-${sectionIdx}-${empId}-${col}`}
-      className={`absolute top-0 bottom-0 ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"} ${
-        isToday ? "bg-neutral-950/90" : ""
-      }`}
-      style={{ left: colLeft(col), width: colW(col) }}
-    >
-      {/* ✅ Vertikale Grid-Linie rechts (besser sichtbar als border) */}
-      <div className="absolute right-0 top-0 bottom-0 w-px bg-neutral-600/80" />
+                <div className="absolute left-0 right-0 bottom-0 h-px bg-neutral-600/80 pointer-events-none" />
 
-      {/* ✅ Heute-Markierung: dünne orange Linie links im Feld */}
-      {isToday ? <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-orange-500/60" /> : null}
-    </div>
-  );
-})}
-
-{/* ✅ Horizontale Grid-Linie pro Zeile (im schwarzen Bereich sichtbar) */}
-<div className="absolute left-0 right-0 bottom-0 h-px bg-neutral-600/80 pointer-events-none" />
-
-                {/* ✅ Drop-Zonen (nur Sektion 0) – liegen ÜBER Raster */}
                 {sectionIdx === 0
                   ? Array.from({ length: layout.cols }).map((_, col) => (
                       <div
@@ -599,12 +591,11 @@ export default function BoardV2(p: Props) {
                         className="absolute top-0"
                         style={{ left: colLeft(col), width: colW(col), height: PROJECT_BAND_H }}
                         onDragOver={(e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  setHoverPool(true);
-  setHoverRowId(null);
-}}
-
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setHoverPool(false);
+                          setHoverRowId(empId);
+                        }}
                         onDragEnter={() => {
                           setHoverRowId(empId);
                           setHoverPool(false);
@@ -615,7 +606,59 @@ export default function BoardV2(p: Props) {
                     ))
                   : null}
 
-                {/* Projektspur: Plan-Outline (mit Lücken Fr/Sa ohne Buchung) */}
+                {Array.from({ length: layout.cols }).map((_, col) => {
+                  const d = dateForCol(sectionStart, col);
+                  const iso = isoFromLocalDate(d);
+
+                  const getMin = (bereich: "maschine" | "bank" | "lack" | "montage") =>
+                    employeeDayAreaMin.get(`${empId}__${iso}__${bereich}`) ?? 0;
+
+                  const mMaschine = getMin("maschine");
+                  const mBank = getMin("bank");
+                  const mLack = getMin("lack");
+                  const mMontage = getMin("montage");
+
+                  const total = mMaschine + mBank + mLack + mMontage;
+                  if (total <= 0) return null;
+
+                  const cap = 600;
+                  const pct = Math.max(0, Math.min(1, total / cap));
+
+                  const top = PROJECT_BAND_H + 6;
+                  const maxH = Math.max(6, layout.rowH - top - 6);
+                  const usedH = Math.max(3, Math.round(maxH * pct));
+
+                  const left = colLeft(col) + 3;
+                  const width = Math.max(6, colW(col) - 6);
+
+                  const toH = (min: number) => (total > 0 ? Math.round((min / total) * usedH) : 0);
+
+                  const hMaschine = toH(mMaschine);
+                  const hBank = toH(mBank);
+                  const hLack = toH(mLack);
+                  const hMontage = Math.max(0, usedH - (hMaschine + hBank + hLack));
+
+                  const hours = Math.round((total / 60) * 10) / 10;
+
+                  return (
+                    <div
+                      key={`bookstack-${sectionIdx}-${empId}-${col}`}
+                      className="absolute z-10 pointer-events-none"
+                      style={{ left, top, width, height: maxH }}
+                      title={`${empName} · ${iso}\nGesamt: ${hours}h (${total} min)\nMaschine: ${mMaschine} | Bank: ${mBank} | Lack: ${mLack} | Montage: ${mMontage}`}
+                    >
+                      <div className="absolute inset-0 rounded-sm bg-neutral-900/30" />
+
+                      <div className="absolute bottom-0 left-0 right-0 rounded-sm overflow-hidden">
+                        {hMaschine > 0 ? <div className="w-full bg-orange-500/28" style={{ height: hMaschine }} /> : null}
+                        {hBank > 0 ? <div className="w-full bg-orange-500/20" style={{ height: hBank }} /> : null}
+                        {hLack > 0 ? <div className="w-full bg-orange-500/24" style={{ height: hLack }} /> : null}
+                        {hMontage > 0 ? <div className="w-full bg-orange-500/32" style={{ height: hMontage }} /> : null}
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {rowParts.map((part) => {
                   const segs = buildPlanOutlineSegments(part, sectionStart);
                   if (segs.length === 0) return null;
@@ -638,9 +681,7 @@ export default function BoardV2(p: Props) {
                         const h = PROJECT_LANE_H - 4;
 
                         const proj = projectById.get(String(part.projectId));
-                        const title = `${part.name}\nProjektId: ${part.projectId}\nZuordnung: ${String(
-                          (proj as any)?.zugeordnetAnId ?? "-"
-                        )}`;
+                        const title = `${part.name}\nProjektId: ${part.projectId}\nZuordnung: ${String((proj as any)?.zugeordnetAnId ?? "-")}`;
 
                         const showLabel = w >= 140;
 
@@ -681,23 +722,38 @@ export default function BoardV2(p: Props) {
     );
   }
 
-   return (
-  <div className="w-full overflow-hidden bg-neutral-200/40" style={{ height: "100vh" }}>
-    <div className="flex w-full h-full overflow-hidden gap-3">
+    // ====== WICHTIG: Board soll exakt die Resthöhe unter der Topbar nutzen ======
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  const [outerH, setOuterH] = useState<number>(600);
 
+  useLayoutEffect(() => {
+    const recalc = () => {
+      const el = outerRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top || 0;
+      const h = Math.max(300, Math.floor(window.innerHeight - top));
+      setOuterH(h);
+    };
+
+    recalc();
+    window.addEventListener("resize", recalc);
+    return () => window.removeEventListener("resize", recalc);
+  }, []);
+
+  return (
+    <div ref={outerRef} className="w-full overflow-hidden bg-neutral-200/40" style={{ height: outerH }}>
+      <div className="flex w-full h-full overflow-hidden gap-3">
         {/* LEFT (Board) */}
-        <div ref={leftRef} className="flex-1 min-w-0 overflow-hidden" style={{ height: "100vh" }}>
+        <div ref={leftRef} className="flex-1 min-w-0 overflow-hidden h-full">
           <div className="flex flex-col gap-3">
             {/* Section 1 */}
             <div className="rounded-2xl border border-neutral-300 bg-neutral-100/70 overflow-hidden">
-
               {renderHeader(0, sectionStart0)}
               {renderRows(0, sectionStart0)}
             </div>
 
             {/* Section 2 */}
             <div className="rounded-2xl border border-neutral-300 bg-neutral-100/70 overflow-hidden">
-
               {renderHeader(1, sectionStart1)}
               {renderRows(1, sectionStart1)}
             </div>
@@ -709,7 +765,7 @@ export default function BoardV2(p: Props) {
           className={`shrink-0 border-l border-neutral-800 bg-neutral-950/95 p-3 overflow-y-auto ${
             draggingId && hoverPool ? "ring-2 ring-orange-500/70 ring-inset" : ""
           }`}
-          style={{ width: POOL_W, height: "100vh" }}
+          style={{ width: POOL_W, height: "100%" }}
           title="Hierhin ziehen = Projekt aus dem Board entfernen"
           onDragOver={(e) => {
             e.preventDefault();
