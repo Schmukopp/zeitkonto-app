@@ -459,7 +459,8 @@ export default function BoardV2(p: Props) {
     return (
       <div className="flex border-b border-neutral-800" style={{ height: layout.headerH }}>
         {/* Name-Spalte */}
-        <div className="px-3 flex items-center text-sm text-neutral-300" style={{ width: NAME_COL_W }}>
+       <div className="px-3 flex items-center text-lg font-bold text-neutral-900 tracking-tight" style={{ width: NAME_COL_W }}>
+
           {sectionIdx === 0 ? "Board V2" : ""}
         </div>
 
@@ -480,7 +481,7 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`kw-${sectionIdx}-${wi}`}
-                  className="absolute border-r border-neutral-800 bg-neutral-950"
+                  className="absolute border-r border-neutral-700/60 bg-neutral-950"
                   style={{ left, width, height: layout.kwRowH }}
                 >
                   <div className="h-full flex items-center justify-center text-xs text-neutral-400">
@@ -502,7 +503,7 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`d-${sectionIdx}-${col}`}
-                  className={`absolute top-0 bottom-0 border-r border-neutral-800 text-center ${
+                  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 text-center ${
                     weekend ? "bg-neutral-900/70" : "bg-neutral-950"
                   }`}
                   style={{ left, width }}
@@ -536,12 +537,20 @@ export default function BoardV2(p: Props) {
 
           return (
             <div
-              key={`r-${sectionIdx}-${empId}`}
-              className={`flex border-b border-neutral-800 ${rowRing}`}
-              style={{ height: layout.rowH }}
-            >
-              <div className="px-3 flex items-center text-sm truncate" style={{ width: NAME_COL_W }} title={empName}>
-                <div className="min-w-0 truncate text-neutral-200">{empName}</div>
+  key={`r-${sectionIdx}-${empId}`}
+  className={`flex border-b border-neutral-800 ${rowRing}`}
+  style={{ height: layout.rowH }}
+>
+
+              <div
+  className="px-3 flex items-center text-sm truncate bg-neutral-400/70 border-r border-neutral-300"
+  style={{ width: NAME_COL_W }}
+  title={empName}
+>
+
+                <div className="min-w-0 truncate text-neutral-900 font-bold">{empName}</div>
+
+
               </div>
 
               <div className="relative" style={{ width: layout.totalGridW, height: layout.rowH }}>
@@ -551,12 +560,13 @@ export default function BoardV2(p: Props) {
                   const weekend = isFriOrSatLocal(d);
                   return (
                     <div
-                      key={`bg-${sectionIdx}-${empId}-${col}`}
-                      className={`absolute top-0 bottom-0 border-r border-neutral-800 ${
-                        weekend ? "bg-neutral-900/70" : "bg-neutral-950"
-                      }`}
-                      style={{ left: colLeft(col), width: colW(col) }}
-                    />
+  key={`bg-${sectionIdx}-${empId}-${col}`}
+  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 ${
+    weekend ? "bg-neutral-900/70" : "bg-neutral-950"
+  }`}
+  style={{ left: colLeft(col), width: colW(col) }}
+/>
+
                   );
                 })}
 
@@ -650,20 +660,23 @@ export default function BoardV2(p: Props) {
     );
   }
 
-    return (
-    <div className="w-full overflow-hidden" style={{ height: "100vh" }}>
-      <div className="flex w-full h-full overflow-hidden gap-3">
+   return (
+  <div className="w-full overflow-hidden bg-neutral-200/40" style={{ height: "100vh" }}>
+    <div className="flex w-full h-full overflow-hidden gap-3">
+
         {/* LEFT (Board) */}
         <div ref={leftRef} className="flex-1 min-w-0 overflow-hidden" style={{ height: "100vh" }}>
           <div className="flex flex-col gap-3">
             {/* Section 1 */}
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
+            <div className="rounded-2xl border border-neutral-300 bg-neutral-100/70 overflow-hidden">
+
               {renderHeader(0, sectionStart0)}
               {renderRows(0, sectionStart0)}
             </div>
 
             {/* Section 2 */}
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-950 overflow-hidden">
+            <div className="rounded-2xl border border-neutral-300 bg-neutral-100/70 overflow-hidden">
+
               {renderHeader(1, sectionStart1)}
               {renderRows(1, sectionStart1)}
             </div>
@@ -672,7 +685,7 @@ export default function BoardV2(p: Props) {
 
         {/* RIGHT (Pool) */}
         <div
-          className={`shrink-0 border-l border-neutral-800 bg-neutral-950 p-3 overflow-y-auto ${
+          className={`shrink-0 border-l border-neutral-800 bg-neutral-950/95 p-3 overflow-y-auto ${
             draggingId && hoverPool ? "ring-2 ring-orange-500/70 ring-inset" : ""
           }`}
           style={{ width: POOL_W, height: "100vh" }}
