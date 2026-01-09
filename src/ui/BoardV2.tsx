@@ -1,6 +1,8 @@
 // src/ui/BoardV2.tsx
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { saveState, type State } from "../core/timeStore";
+import { getStatus } from "../core/timeRules";
+
 
 import type { MitarbeiterState } from "../core/mitarbeiterStore";
 import {
@@ -14,14 +16,11 @@ import {
 } from "./BoardV2Layout";
 
 /**
- * Board V2 – Schritt 2:
+ * Board V2 – Schritt 2/3:
  * - Layout-Engine Vollbild (2×4 Wochen)
  * - Planblöcke anzeigen + Fr/Sa-Lücken ohne Buchung
  * - ✅ Drag&Drop + Pool rechts
- *   - Drag aus Pool → Drop auf Mitarbeiter/Tag (nur Sektion 0)
- *   - Drag im Board → anderes Feld (nur Sektion 0)
- *   - Drag zurück in Pool → Layout entfernen
- *   - Shift beim Drop toggelt Lane (0/1)
+ * - ✅ Buchungen sichtbar (pro Projekt, pro Tag, in Lanes)
  */
 
 type Props = {
@@ -37,6 +36,14 @@ const NAME_COL_W = 180;
 const PROJECT_BAND_H = 32;
 const MAX_PROJECT_LANES = 2;
 const PROJECT_LANE_H = PROJECT_BAND_H / MAX_PROJECT_LANES;
+
+// Buchungen-Lanes (unter der Projektspur)
+const MIN_BOOKING_LANES = 2;
+const MAX_BOOKING_LANES = 4;
+const BOOKING_LANE_H = 18;
+
+// Basis-Kapazität pro Tag (10h)
+const BASE_CAP_MIN = 600;
 
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
@@ -77,6 +84,21 @@ type BlockPart = {
   span: number; // <= 24
 };
 
+// ===== Buchungs-Packing =====
+type PackedSeg = {
+  key: string;
+  col: number;
+  lane: number;
+  left: number;
+  width: number;
+  label: string;
+  tooltip: string;
+
+  // ✅ Buchungen an Urlaub/Krank-Tagen abdunkeln
+  dim?: boolean;
+};
+
+
 export default function BoardV2(p: Props) {
   const { state, setState, ms } = p;
 
@@ -86,6 +108,24 @@ export default function BoardV2(p: Props) {
     arr.sort((a: any, b: any) => String(a?.name ?? "").localeCompare(String(b?.name ?? ""), "de"));
     return arr;
   }, [mitarbeiterAll]);
+
+  // ====== Board soll exakt die Resthöhe unter der Topbar nutzen ======
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  const [outerH, setOuterH] = useState<number>(600);
+
+  useLayoutEffect(() => {
+    const recalc = () => {
+      const el = outerRef.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top || 0;
+      const h = Math.max(300, Math.floor(window.innerHeight - top));
+      setOuterH(h);
+    };
+
+    recalc();
+    window.addEventListener("resize", recalc);
+    return () => window.removeEventListener("resize", recalc);
+  }, []);
 
   // Left viewport messen (ohne Pool)
   const leftRef = useRef<HTMLDivElement | null>(null);
@@ -169,9 +209,10 @@ export default function BoardV2(p: Props) {
     return m;
   }, [projectDayMin]);
 
-  // ====== Index: Buchungen pro Mitarbeiter/Tag (Minuten, nur Arbeit) ======
-  const employeeDayMin = useMemo(() => {
-    const m = new Map<string, number>(); // key: `${mid}__${iso}`
+  // ====== Index: Buchungen pro Mitarbeiter/Tag/Projekt (Minuten) ======
+  const employeeDayProjIdx = useMemo(() => {
+    // key: `${mid}__${iso}` => Map(pid->min)
+    const tmp = new Map<string, Map<string, number>>();
     const arr: any[] = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
 
     for (const b of arr) {
@@ -180,6 +221,9 @@ export default function BoardV2(p: Props) {
 
       const mid = String(b?.mitarbeiterId ?? "").trim();
       if (!mid) continue;
+
+      const pid = String(b?.projektId ?? "").trim();
+      if (!pid) continue;
 
       const iso = String(b?.datum ?? "").slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) continue;
@@ -188,38 +232,22 @@ export default function BoardV2(p: Props) {
       if (min <= 0) continue;
 
       const key = `${mid}__${iso}`;
-      m.set(key, (m.get(key) ?? 0) + min);
+      if (!tmp.has(key)) tmp.set(key, new Map());
+      const inner = tmp.get(key)!;
+      inner.set(pid, (inner.get(pid) ?? 0) + min);
     }
 
-    return m;
-  }, [state]);
-
-  // ====== Index: Buchungen pro Mitarbeiter/Tag/Bereich (Minuten, nur Arbeit) ======
-  const employeeDayAreaMin = useMemo(() => {
-    const m = new Map<string, number>(); // key: `${mid}__${iso}__${bereich}`
-    const arr: any[] = Array.isArray((state as any)?.buchungen) ? ((state as any).buchungen as any[]) : [];
-
-    for (const b of arr) {
-      if (!b || typeof b !== "object") continue;
-      if (String(b?.art ?? "") !== "arbeit") continue;
-
-      const mid = String(b?.mitarbeiterId ?? "").trim();
-      if (!mid) continue;
-
-      const iso = String(b?.datum ?? "").slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) continue;
-
-      const bereich = String(b?.bereich ?? "").trim();
-      if (!bereich) continue;
-
-      const min = Math.max(0, Math.round(safeNumber(b?.minuten) || 0));
-      if (min <= 0) continue;
-
-      const key = `${mid}__${iso}__${bereich}`;
-      m.set(key, (m.get(key) ?? 0) + min);
+    // final: key => sorted list
+    const out = new Map<string, Array<{ projektId: string; minuten: number }>>();
+    for (const [key, inner] of tmp.entries()) {
+      out.set(
+        key,
+        Array.from(inner.entries())
+          .map(([projektId, minuten]) => ({ projektId, minuten }))
+          .sort((a, b) => b.minuten - a.minuten)
+      );
     }
-
-    return m;
+    return out;
   }, [state]);
 
   // ====== Layout aus State ziehen ======
@@ -348,13 +376,14 @@ export default function BoardV2(p: Props) {
     clearDnDHovers();
   }
 
+  // ====== Block-Spans (einfach & stabil) ======
   function calcSpanColsFromStart(projectId: string, startDate: Date, minutesTarget: number): number {
     if (minutesTarget <= 0) return 1;
 
     let remain = minutesTarget;
     let span = 0;
 
-    const MAX = 24 * 2;
+    const MAX = 24 * 2; // max 2 Sektionen
     for (let i = 0; i < MAX; i++) {
       const d = addDays(startDate, i);
       const iso = isoFromLocalDate(d);
@@ -377,6 +406,7 @@ export default function BoardV2(p: Props) {
     return Math.max(1, span);
   }
 
+  // ====== Blocks bauen (nur Projekte, die im Layout stehen) ======
   const blocks: Block[] = useMemo(() => {
     const out: Block[] = [];
 
@@ -413,6 +443,7 @@ export default function BoardV2(p: Props) {
     return out;
   }, [boardProjects, layoutMap, projectTotalMin, sectionStart0, projectDayMin, layout.cols]);
 
+  // ====== Wrap auf 2 Sektionen ======
   function splitBlock(b: Block): BlockPart[] {
     const parts: BlockPart[] = [];
 
@@ -452,6 +483,7 @@ export default function BoardV2(p: Props) {
 
   const blockParts: BlockPart[] = useMemo(() => blocks.flatMap(splitBlock), [blocks]);
 
+  // ====== Plan-Outline: Segmente mit Lücken (Fr/Sa ohne Buchung => Lücke) ======
   function buildPlanOutlineSegments(part: BlockPart, sectionStart: Date): Array<{ start: number; span: number }> {
     const segs: Array<{ start: number; span: number }> = [];
 
@@ -485,15 +517,137 @@ export default function BoardV2(p: Props) {
     if (curStart !== null) segs.push({ start: curStart, span: curLen });
     return segs;
   }
+  // ===== Status (Urlaub/Krank/Ü-Abbau) =====
+  function renderStatusOverlay(sectionIdx: 0 | 1, sectionStart: Date, empId: string) {
+    const buchungen = (((state as any)?.buchungen ?? []) as any[]) || [];
+
+    return Array.from({ length: layout.cols }).map((_, col) => {
+      const d = dateForCol(sectionStart, col);
+      const iso = isoFromLocalDate(d);
+
+      const status = getStatus(buchungen as any, iso, empId);
+      if (!status) return null;
+
+      let label = "";
+      let cls = "";
+
+      if ((status as any).art === "urlaub") {
+        label = "Urlaub";
+        cls = "bg-emerald-600/85 text-neutral-950";
+      } else if ((status as any).art === "krank") {
+        label = "Krank";
+        cls = "bg-rose-600/85 text-neutral-950";
+      } else if ((status as any).art === "ueberstundenabbau") {
+        label = "Ü-Abbau";
+        cls = "bg-indigo-600/85 text-neutral-50";
+      } else {
+        return null;
+      }
+
+      return (
+        <div
+          key={`status-${sectionIdx}-${empId}-${col}`}
+          className={`absolute z-30 rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow ${cls}`}
+          style={{
+  left: colLeft(col) + 6,
+  // ✅ immer innerhalb der Zeile bleiben (sonst "wandert" es optisch in die nächste Mitarbeiter-Zeile)
+  top: clamp(layout.rowH - 18, PROJECT_BAND_H + 2, layout.rowH - 14),
+}}
+
+          title={`${label} · ${iso}`}
+        >
+          {label}
+        </div>
+      );
+    });
+  }
+
+  // ===== Buchungen packen (pro Tag) =====
+  function packDaySegments(empId: string, sectionStart: Date): { segs: PackedSeg[]; lanes: number } {
+    const segs: PackedSeg[] = [];
+    let maxLaneUsed = 0;
+
+    for (let col = 0; col < layout.cols; col++) {
+      const d = dateForCol(sectionStart, col);
+      const iso = isoFromLocalDate(d);
+      const dayKey = `${empId}__${iso}`;
+      // ✅ Status prüfen (Urlaub/Krank => Buchungen abdunkeln)
+      const status = getStatus((((state as any)?.buchungen ?? []) as any[]) || [], iso, empId);
+      const dimBookings = (status as any)?.art === "urlaub" || (status as any)?.art === "krank";
+
+      const entries = employeeDayProjIdx.get(dayKey) ?? [];
+      if (entries.length === 0) continue;
+
+      const dayW = colW(col);
+      const denom = BASE_CAP_MIN;
+
+      const usedPxByLane: number[] = Array.from({ length: MIN_BOOKING_LANES }, () => 0);
+
+      for (const e of entries) {
+        const pid = String(e.projektId);
+        const proj = projectById.get(pid);
+        const pname = String((proj as any)?.name ?? pid);
+
+        const widthPxRaw = (Math.max(0, e.minuten) / denom) * dayW;
+
+// ✅ Sichtbarkeit: kleine Buchungen (z.B. 2h) dürfen nicht "wegoptisch" werden.
+// 16px ist die kleinste Breite, bei der Border + Layer + Text noch sinnvoll erkennbar sind.
+const widthPx = clamp(Math.round(widthPxRaw), 16, Math.max(16, dayW - 6));
+
+
+        let lane = 0;
+        while (true) {
+          if (lane >= usedPxByLane.length) {
+            if (usedPxByLane.length < MAX_BOOKING_LANES) usedPxByLane.push(0);
+            else break;
+          }
+
+          const used = usedPxByLane[lane];
+          if (used + widthPx + 2 <= dayW - 2) break;
+
+          if (lane >= MAX_BOOKING_LANES - 1) break;
+          lane++;
+        }
+
+        const left = clamp(usedPxByLane[lane] + 2, 2, Math.max(2, dayW - 2));
+        const maxW = Math.max(6, dayW - 2 - left);
+        const w = Math.min(widthPx, maxW);
+
+        usedPxByLane[lane] = left + w;
+
+        const label = `${Math.round((e.minuten / 60) * 10) / 10}h`;
+        const tooltip = `${pname}\n${iso}\nIst: ${e.minuten} min`;
+        segs.push({
+          key: `${empId}__${iso}__${pid}__${lane}__${left}`,
+          col,
+          lane,
+          left,
+          width: w,
+          label,
+          tooltip,
+          dim: dimBookings,
+        });
+
+
+        if (lane + 1 > maxLaneUsed) maxLaneUsed = lane + 1;
+      }
+    }
+
+    const lanes = Math.min(MAX_BOOKING_LANES, Math.max(MIN_BOOKING_LANES, maxLaneUsed));
+    return { segs, lanes };
+  }
 
   function renderHeader(sectionIdx: number, sectionStart: Date) {
     return (
       <div className="flex border-b border-neutral-800" style={{ height: layout.headerH }}>
+        {/* Name-Spalte */}
         <div className="px-3 flex items-center text-lg font-bold text-neutral-900 tracking-tight" style={{ width: NAME_COL_W }}>
           {sectionIdx === 0 ? "Board V2" : ""}
         </div>
 
+        {/* Grid */}
         <div className="relative" style={{ width: layout.totalGridW, height: layout.headerH }}>
+          {/* KW Row */}
           <div className="absolute left-0 right-0 top-0" style={{ height: layout.kwRowH }}>
             {Array.from({ length: layout.weeksPerSection }).map((_, wi) => {
               const isCurrentKw = sectionIdx === 0 && wi === 1;
@@ -510,10 +664,16 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`kw-${sectionIdx}-${wi}`}
-                  className={`absolute border-r border-neutral-700 ${isCurrentKw ? "bg-orange-400 border-orange-500" : "bg-neutral-950"}`}
+                  className={`absolute border-r border-neutral-700 ${
+                    isCurrentKw ? "bg-orange-400 border-orange-500" : "bg-neutral-950"
+                  }`}
                   style={{ left, width, height: layout.kwRowH }}
                 >
-                  <div className={`h-full flex items-center justify-center text-xs font-bold ${isCurrentKw ? "text-neutral-900" : "text-neutral-400"}`}>
+                  <div
+                    className={`h-full flex items-center justify-center text-xs font-bold ${
+                      isCurrentKw ? "text-neutral-900" : "text-neutral-400"
+                    }`}
+                  >
                     KW {kw}
                   </div>
                 </div>
@@ -521,6 +681,7 @@ export default function BoardV2(p: Props) {
             })}
           </div>
 
+          {/* Day Row */}
           <div className="absolute left-0 right-0" style={{ top: layout.kwRowH, height: layout.dayRowH }}>
             {Array.from({ length: layout.cols }).map((_, col) => {
               const d = dateForCol(sectionStart, col);
@@ -531,7 +692,9 @@ export default function BoardV2(p: Props) {
               return (
                 <div
                   key={`d-${sectionIdx}-${col}`}
-                  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 text-center ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"}`}
+                  className={`absolute top-0 bottom-0 border-r border-neutral-700/60 text-center ${
+                    weekend ? "bg-neutral-900/70" : "bg-neutral-950"
+                  }`}
                   style={{ left, width }}
                   title={isoDateLocal(d)}
                 >
@@ -558,13 +721,29 @@ export default function BoardV2(p: Props) {
           const rowParts = blockParts.filter((bp) => bp.sectionIdx === sectionIdx && String(bp.rowId) === empId);
           const rowRing = draggingId && hoverRowId === empId ? "ring-2 ring-orange-500/70" : "";
 
+          // Buchungen packen (nur für diese Sektion)
+          const pack = packDaySegments(empId, sectionStart);
+          const bookingLanes = pack.lanes;
+
+          // Buchungsbereich-Höhe (unter Projektspur)
+          const bookingAreaH = bookingLanes * BOOKING_LANE_H;
+          const bookingsTop = PROJECT_BAND_H + 6;
+
           return (
             <div key={`r-${sectionIdx}-${empId}`} className={`flex border-b border-neutral-800 ${rowRing}`} style={{ height: layout.rowH }}>
-              <div className="px-3 flex items-center text-sm truncate bg-neutral-400/70 border-r border-neutral-300" style={{ width: NAME_COL_W }} title={empName}>
+              <div
+                className="px-3 flex items-center text-sm truncate bg-neutral-400/70 border-r border-neutral-300"
+                style={{ width: NAME_COL_W }}
+                title={empName}
+              >
                 <div className="min-w-0 truncate text-neutral-900 font-bold">{empName}</div>
               </div>
 
-              <div className="relative" style={{ width: layout.totalGridW, height: layout.rowH }}>
+              <div className="relative overflow-hidden" style={{ width: layout.totalGridW, height: layout.rowH }}>
+
+                                {renderStatusOverlay(sectionIdx, sectionStart, empId)}
+
+                {/* Hintergrundraster */}
                 {Array.from({ length: layout.cols }).map((_, col) => {
                   const d = dateForCol(sectionStart, col);
                   const weekend = isFriOrSatLocal(d);
@@ -573,7 +752,9 @@ export default function BoardV2(p: Props) {
                   return (
                     <div
                       key={`bg-${sectionIdx}-${empId}-${col}`}
-                      className={`absolute top-0 bottom-0 ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"} ${isToday ? "bg-neutral-950/90" : ""}`}
+                      className={`absolute top-0 bottom-0 ${weekend ? "bg-neutral-900/70" : "bg-neutral-950"} ${
+                        isToday ? "bg-neutral-950/90" : ""
+                      }`}
                       style={{ left: colLeft(col), width: colW(col) }}
                     >
                       <div className="absolute right-0 top-0 bottom-0 w-px bg-neutral-600/80" />
@@ -584,6 +765,7 @@ export default function BoardV2(p: Props) {
 
                 <div className="absolute left-0 right-0 bottom-0 h-px bg-neutral-600/80 pointer-events-none" />
 
+                {/* Drop-Zonen (nur Sektion 0) */}
                 {sectionIdx === 0
                   ? Array.from({ length: layout.cols }).map((_, col) => (
                       <div
@@ -606,59 +788,62 @@ export default function BoardV2(p: Props) {
                     ))
                   : null}
 
-                {Array.from({ length: layout.cols }).map((_, col) => {
-                  const d = dateForCol(sectionStart, col);
-                  const iso = isoFromLocalDate(d);
+                {/* ===== Buchungen (pro Projekt): Segmente in Lanes ===== */}
+                <div
+                  className="absolute z-10 pointer-events-none"
+                  style={{
+                    left: 0,
+                    right: 0,
+                    top: bookingsTop,
+                    height: Math.min(bookingAreaH, Math.max(0, layout.rowH - bookingsTop - 6)),
+                  }}
+                >
+                  {pack.segs.map((seg) => {
+                    const absLeft = colLeft(seg.col) + seg.left;
+                    const topPx = seg.lane * BOOKING_LANE_H + 2;
 
-                  const getMin = (bereich: "maschine" | "bank" | "lack" | "montage") =>
-                    employeeDayAreaMin.get(`${empId}__${iso}__${bereich}`) ?? 0;
+                    return (
+                      <div
+                        key={`bk-${sectionIdx}-${seg.key}`}
+                            className={`absolute rounded-md border border-neutral-800 overflow-hidden ${seg.dim ? "opacity-40" : ""}`}
 
-                  const mMaschine = getMin("maschine");
-                  const mBank = getMin("bank");
-                  const mLack = getMin("lack");
-                  const mMontage = getMin("montage");
 
-                  const total = mMaschine + mBank + mLack + mMontage;
-                  if (total <= 0) return null;
+                        style={{
+                          left: absLeft,
+                          top: topPx,
+                          width: seg.width,
+                          height: BOOKING_LANE_H - 4,
+                        }}
+                        title={seg.tooltip}
+                      >
+                        <div className="absolute inset-0 bg-orange-500/35" />
+<div className="absolute inset-0 bg-neutral-950/60" />
 
-                  const cap = 600;
-                  const pct = Math.max(0, Math.min(1, total / cap));
+{/* ✅ Text bleibt IMMER sichtbar:
+    - nicht mehr "center", weil Center bei kleinen Breiten optisch verschwindet
+    - linksbündig + padding + truncate => "2h" bleibt sichtbar
+*/}
+<div className="relative h-full flex items-center px-1 text-[10px] font-semibold text-neutral-100">
+  <span className="block w-full truncate">{seg.label}</span>
+</div>
 
-                  const top = PROJECT_BAND_H + 6;
-                  const maxH = Math.max(6, layout.rowH - top - 6);
-                  const usedH = Math.max(3, Math.round(maxH * pct));
+{/* ✅ Extra-Boost für sehr schmale Segmente:
+    - macht "2h" lesbar, ohne es auszublenden
+*/}
+{seg.width < 26 ? (
+  <div className="absolute inset-0 flex items-center px-1 pointer-events-none">
+    <span className="rounded bg-neutral-950/70 px-1 text-[10px] font-semibold text-neutral-100">
+      {seg.label}
+    </span>
+  </div>
+) : null}
 
-                  const left = colLeft(col) + 3;
-                  const width = Math.max(6, colW(col) - 6);
-
-                  const toH = (min: number) => (total > 0 ? Math.round((min / total) * usedH) : 0);
-
-                  const hMaschine = toH(mMaschine);
-                  const hBank = toH(mBank);
-                  const hLack = toH(mLack);
-                  const hMontage = Math.max(0, usedH - (hMaschine + hBank + hLack));
-
-                  const hours = Math.round((total / 60) * 10) / 10;
-
-                  return (
-                    <div
-                      key={`bookstack-${sectionIdx}-${empId}-${col}`}
-                      className="absolute z-10 pointer-events-none"
-                      style={{ left, top, width, height: maxH }}
-                      title={`${empName} · ${iso}\nGesamt: ${hours}h (${total} min)\nMaschine: ${mMaschine} | Bank: ${mBank} | Lack: ${mLack} | Montage: ${mMontage}`}
-                    >
-                      <div className="absolute inset-0 rounded-sm bg-neutral-900/30" />
-
-                      <div className="absolute bottom-0 left-0 right-0 rounded-sm overflow-hidden">
-                        {hMaschine > 0 ? <div className="w-full bg-orange-500/28" style={{ height: hMaschine }} /> : null}
-                        {hBank > 0 ? <div className="w-full bg-orange-500/20" style={{ height: hBank }} /> : null}
-                        {hLack > 0 ? <div className="w-full bg-orange-500/24" style={{ height: hLack }} /> : null}
-                        {hMontage > 0 ? <div className="w-full bg-orange-500/32" style={{ height: hMontage }} /> : null}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
 
+                {/* Projektspur: Plan-Outline */}
                 {rowParts.map((part) => {
                   const segs = buildPlanOutlineSegments(part, sectionStart);
                   if (segs.length === 0) return null;
@@ -669,7 +854,6 @@ export default function BoardV2(p: Props) {
                     <React.Fragment key={part.key}>
                       {segs.map((s, idx) => {
                         const absCol = part.startCol + s.start;
-
                         const leftPx = colLeft(absCol) + 2;
 
                         let w = 0;
@@ -721,24 +905,7 @@ export default function BoardV2(p: Props) {
       </>
     );
   }
-
-    // ====== WICHTIG: Board soll exakt die Resthöhe unter der Topbar nutzen ======
-  const outerRef = useRef<HTMLDivElement | null>(null);
-  const [outerH, setOuterH] = useState<number>(600);
-
-  useLayoutEffect(() => {
-    const recalc = () => {
-      const el = outerRef.current;
-      if (!el) return;
-      const top = el.getBoundingClientRect().top || 0;
-      const h = Math.max(300, Math.floor(window.innerHeight - top));
-      setOuterH(h);
-    };
-
-    recalc();
-    window.addEventListener("resize", recalc);
-    return () => window.removeEventListener("resize", recalc);
-  }, []);
+                
 
   return (
     <div ref={outerRef} className="w-full overflow-hidden bg-neutral-200/40" style={{ height: outerH }}>
@@ -788,9 +955,7 @@ export default function BoardV2(p: Props) {
           }}
         >
           <div className="text-xs text-neutral-400">Projekt-Pool</div>
-          <div className="text-[11px] text-neutral-600 mt-1">
-            Drop hierhin, um ein Projekt aus dem Board zu entfernen.
-          </div>
+          <div className="text-[11px] text-neutral-600 mt-1">Drop hierhin, um ein Projekt aus dem Board zu entfernen.</div>
 
           <div className="mt-3 space-y-2">
             {poolProjects.length === 0 ? (
@@ -805,9 +970,7 @@ export default function BoardV2(p: Props) {
                   className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-2 cursor-grab active:cursor-grabbing"
                   title="Ins Board ziehen: auf einen Mitarbeiter droppen"
                 >
-                  <div className="text-xs font-medium text-neutral-100 truncate">
-                    {String(pp?.name ?? "Ohne Name")}
-                  </div>
+                  <div className="text-xs font-medium text-neutral-100 truncate">{String(pp?.name ?? "Ohne Name")}</div>
                   <div className="text-[10px] text-neutral-500 mt-0.5">ID: {String(pp?.id ?? "")}</div>
                 </div>
               ))
